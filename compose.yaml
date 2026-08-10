@@ -1,0 +1,96 @@
+name: zonk-fun
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: zonk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zonk
+      POSTGRES_USER: zonk
+      POSTGRES_PASSWORD: zonk_local
+    ports:
+      - "15434:5432"
+    volumes:
+      - zonk_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zonk -d zonk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:8-alpine
+    container_name: zonk-redis
+    restart: unless-stopped
+    ports:
+      - "16380:6379"
+    volumes:
+      - zonk_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 4000
+      APP_ENV: development
+      DATABASE_URL: postgres://zonk:zonk_local@postgres:5432/zonk?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:4000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  indexer:
+    build:
+      context: .
+      dockerfile: apps/indexer/Dockerfile
+    restart: unless-stopped
+    environment:
+      INDEXER_MODE: idle
+      BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:-}
+      DATABASE_URL: postgres://zonk:zonk_local@postgres:5432/zonk?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  zonk_postgres_data:
+  zonk_redis_data:

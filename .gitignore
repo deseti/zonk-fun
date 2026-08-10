@@ -1,0 +1,54 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node / pnpm
+node_modules/
+**/node_modules/
+.pnpm-store/
+.next/
+**/.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Go
+bin/
+*.test
+*.exe
+*.out
+coverage.out
+apps/api/server
+apps/indexer/indexer
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+contracts/.forge-snapshots/
+contracts/lib/*/.git/
+
+# Database / local data
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.bak
