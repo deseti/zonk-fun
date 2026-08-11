@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help install dev-web build-web lint-web typecheck-web go-test go-build contracts-build contracts-test infra-up infra-down infra-status test build validate
+.PHONY: help install dev-web build-web lint-web typecheck-web go-test go-build contracts-build contracts-test db-validate infra-up infra-down infra-status test build validate
 
 help:
 	@echo "Zonk.fun development commands"
@@ -49,6 +49,9 @@ contracts-build:
 
 contracts-test:
 	cd contracts && forge test
+
+db-validate:
+	bash db/validate.sh
 
 infra-up:
 	docker compose up -d postgres redis
