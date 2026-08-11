@@ -8,8 +8,12 @@ library ZonkConstants {
     uint8 internal constant TOKEN_DECIMALS = 18;
 
     uint256 internal constant FEE_DENOMINATOR = 10_000;
-    uint256 internal constant PROTOCOL_FEE_BPS = 100;
-    uint256 internal constant CREATOR_FEE_BPS = 100;
+    uint256 internal constant MAX_PROTOCOL_FEE_BPS = 500;
+    uint256 internal constant MAX_CREATOR_FEE_BPS = 500;
+    uint256 internal constant MAX_TOTAL_FEE_BPS = 1_000;
+    uint256 internal constant MAX_LIQUIDITY_SLIPPAGE_BPS = 1_000;
+    uint64 internal constant MIN_LP_LOCK_DURATION = 30 days;
+    uint64 internal constant MAX_LP_LOCK_DURATION = 10 * 365 days;
     uint256 internal constant MIN_TRADE_AMOUNT = 1;
     uint256 internal constant MAX_CURVE_SUPPLY = 1_000_000_000 ether;
     uint256 internal constant MAX_TRADE_AMOUNT = MAX_CURVE_SUPPLY;

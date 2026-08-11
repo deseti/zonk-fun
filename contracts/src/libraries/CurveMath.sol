@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {ZonkConstants} from "./ZonkConstants.sol";
 
 /// @notice Deterministic fixed-point math for the Phase 2 linear bonding curve.
 ///
@@ -39,24 +38,5 @@ library CurveMath {
         uint256 interval = 2 * soldSupply - tokenAmount;
         uint256 slopeValue = Math.mulDiv(slopePerAmount, interval, 2 * SCALE, Math.Rounding.Floor);
         return linearValue + slopeValue;
-    }
-
-    function protocolFee(uint256 curveValue) internal pure returns (uint256) {
-        return
-            Math.mulDiv(curveValue, ZonkConstants.PROTOCOL_FEE_BPS, ZonkConstants.FEE_DENOMINATOR, Math.Rounding.Ceil);
-    }
-
-    function creatorFee(uint256 curveValue) internal pure returns (uint256) {
-        return Math.mulDiv(curveValue, ZonkConstants.CREATOR_FEE_BPS, ZonkConstants.FEE_DENOMINATOR, Math.Rounding.Ceil);
-    }
-
-    function protocolFeeOnSell(uint256 curveValue) internal pure returns (uint256) {
-        return
-            Math.mulDiv(curveValue, ZonkConstants.PROTOCOL_FEE_BPS, ZonkConstants.FEE_DENOMINATOR, Math.Rounding.Floor);
-    }
-
-    function creatorFeeOnSell(uint256 curveValue) internal pure returns (uint256) {
-        return
-            Math.mulDiv(curveValue, ZonkConstants.CREATOR_FEE_BPS, ZonkConstants.FEE_DENOMINATOR, Math.Rounding.Floor);
     }
 }

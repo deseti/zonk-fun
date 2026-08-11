@@ -39,6 +39,11 @@ pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
+Before starting Compose, replace `replace_with_local_secret` in `.env` with a
+unique local-only PostgreSQL password in both `POSTGRES_PASSWORD` and
+`DATABASE_URL`. Do not reuse a production credential or commit `.env`.
+Compose fails closed when the required PostgreSQL variables are missing.
+
 Start the complete local stack:
 
 ```shell
@@ -51,8 +56,8 @@ The local services are available at:
 - web: http://localhost:3000
 - API: http://localhost:4000
 - API health: http://localhost:4000/health
-- PostgreSQL: localhost:15434
-- Redis: localhost:16380
+- PostgreSQL: localhost:15434 (local host only)
+- Redis: internal Compose network only; it is not published to the host
 
 The indexer runs in explicit idle development mode when no RPC URL is configured.
 Set `BASE_SEPOLIA_RPC_URL` in `.env` only when a local validation environment provides

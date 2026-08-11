@@ -2,6 +2,17 @@
 .env
 .env.*
 !.env.example
+*.secret
+*.secrets
+*.credentials
+*.pem
+*.key
+*.p12
+*.keystore
+secrets/
+**/secrets/
+docker-secrets/
+**/docker-secrets/
 
 # Node / pnpm
 node_modules/
@@ -29,6 +40,8 @@ contracts/out/
 contracts/broadcast/
 contracts/.forge-snapshots/
 contracts/lib/*/.git/
+contracts/deployments/*.json
+!contracts/deployments/base-sepolia.example.json
 
 # Database / local data
 *.db

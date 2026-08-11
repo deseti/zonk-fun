@@ -5,6 +5,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IZonkCurve} from "./interfaces/IZonkCurve.sol";
+import {IFeeManager} from "./interfaces/IFeeManager.sol";
+import {ILiquidityManager} from "./interfaces/ILiquidityManager.sol";
 import {IZonkFactory} from "./interfaces/IZonkFactory.sol";
 import {CurveMath} from "./libraries/CurveMath.sol";
 import {ZonkConstants} from "./libraries/ZonkConstants.sol";
@@ -14,8 +16,8 @@ import {ZonkToken} from "./ZonkToken.sol";
 ///
 /// A curve escrows a creator-selected token allocation. It never mints or burns:
 /// buys transfer escrowed tokens to traders and sells transfer them back. The
-/// tracked reserve contains only the curve value of completed trades; protocol
-/// and creator fees are paid out separately and exactly once.
+/// tracked reserve contains only the curve value of completed trades. Protocol
+/// and creator fees are atomically accrued in FeeManager and claimed separately.
 ///
 /// Economic parameters:
 /// - Reserve denomination: native ETH, tracked in `reserveBalance`.
@@ -23,33 +25,36 @@ import {ZonkToken} from "./ZonkToken.sol";
 /// - Price: `P(q) = startingPrice + slope * q / 1e18`, in wei per whole token.
 /// - Starting price and slope are set per curve, must be nonzero, and are each
 ///   capped at `1e30` to keep all accepted CurveMath intermediates safe.
-/// - Protocol and creator fees are each 100 bps of curve value (2% total).
+/// - Protocol and creator fee rates are read from the immutable FeeManager.
 /// - Buy fees round up; sell fees round down. This prevents buyer underpayment and
 ///   seller overpayment while keeping fees accounted for once.
-/// - Graduation occurs when sold supply reaches `graduationThreshold`; all later
-///   buys and sells revert because external liquidity migration is out of scope.
+/// - Reaching `graduationThreshold` moves the curve to GraduationPending and
+///   stops curve trading. Graduation then atomically migrates the full tracked
+///   reserve and all unsold curve inventory through LiquidityManager.
 /// - Trades are at least one base unit and at most `MAX_TRADE_AMOUNT`.
 contract ZonkCurve is IZonkCurve, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_FEE_BPS = ZonkConstants.PROTOCOL_FEE_BPS;
-    uint256 public constant CREATOR_FEE_BPS = ZonkConstants.CREATOR_FEE_BPS;
-    uint256 public constant FEE_DENOMINATOR = ZonkConstants.FEE_DENOMINATOR;
     uint256 public constant MIN_TRADE_AMOUNT = ZonkConstants.MIN_TRADE_AMOUNT;
     uint256 public constant MAX_TRADE_AMOUNT = ZonkConstants.MAX_TRADE_AMOUNT;
     uint256 public constant MAX_STARTING_PRICE = ZonkConstants.MAX_STARTING_PRICE;
     uint256 public constant MAX_SLOPE = ZonkConstants.MAX_SLOPE;
 
     IZonkFactory public immutable factory;
-    address public immutable protocolFeeRecipient;
+    IFeeManager public immutable override feeManager;
+    ILiquidityManager public immutable override liquidityManager;
 
     mapping(address token => Curve curveState) private _curves;
 
-    constructor(address factory_, address protocolFeeRecipient_) {
-        if (factory_ == address(0)) revert InvalidFactory();
-        if (protocolFeeRecipient_ == address(0)) revert InvalidProtocolRecipient();
+    constructor(address factory_, address feeManager_, address liquidityManager_) {
+        if (factory_ == address(0) || factory_.code.length == 0) revert InvalidFactory();
+        if (feeManager_ == address(0) || feeManager_.code.length == 0) revert InvalidFeeManager();
+        if (liquidityManager_ == address(0) || liquidityManager_.code.length == 0) {
+            revert InvalidLiquidityManager();
+        }
         factory = IZonkFactory(factory_);
-        protocolFeeRecipient = protocolFeeRecipient_;
+        feeManager = IFeeManager(feeManager_);
+        liquidityManager = ILiquidityManager(liquidityManager_);
     }
 
     function createCurve(
@@ -68,7 +73,7 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         }
         if (
             startingPrice == 0 || startingPrice > ZonkConstants.MAX_STARTING_PRICE || slope == 0
-                || slope > ZonkConstants.MAX_SLOPE || graduationThreshold == 0 || graduationThreshold > curveSupply
+                || slope > ZonkConstants.MAX_SLOPE || graduationThreshold == 0 || graduationThreshold >= curveSupply
         ) {
             revert InvalidCurveParameters();
         }
@@ -85,15 +90,24 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
             startingPrice: startingPrice,
             slope: slope,
             graduationThreshold: graduationThreshold,
-            graduated: false
+            lifecycle: Lifecycle.Active
         });
         _curves[token] = curveState;
+        feeManager.registerToken(token, creator);
+        liquidityManager.registerToken(token, creator);
 
         emit CurveCreated(token, creator, curveSupply, startingPrice, slope, graduationThreshold);
     }
 
     function curve(address token) external view returns (Curve memory curveState) {
         curveState = _getCurve(token);
+    }
+
+    function quoteGraduation(address token) external view returns (uint256 tokenAmount, uint256 quoteAmount) {
+        Curve memory curveState = _getCurve(token);
+        if (curveState.lifecycle != Lifecycle.GraduationPending) revert GraduationNotPending();
+        tokenAmount = curveState.curveSupply - curveState.soldSupply;
+        quoteAmount = curveState.reserveBalance;
     }
 
     function quoteBuy(address token, uint256 tokenAmount)
@@ -105,10 +119,12 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         _validateActiveTrade(curveState);
         _validateTradeAmount(tokenAmount);
         if (tokenAmount > curveState.curveSupply - curveState.soldSupply) revert InsufficientCurveInventory();
+        if (tokenAmount > curveState.graduationThreshold - curveState.soldSupply) {
+            revert GraduationThresholdExceeded();
+        }
 
         curveCost = CurveMath.buyCost(curveState.startingPrice, curveState.slope, curveState.soldSupply, tokenAmount);
-        protocolFee = CurveMath.protocolFee(curveCost);
-        creatorFee = CurveMath.creatorFee(curveCost);
+        (protocolFee, creatorFee) = feeManager.calculateBuyFees(curveCost);
         reserveIn = curveCost + protocolFee + creatorFee;
     }
 
@@ -124,8 +140,7 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
 
         curveValue = CurveMath.sellValue(curveState.startingPrice, curveState.slope, curveState.soldSupply, tokenAmount);
         if (curveValue > curveState.reserveBalance) revert InsufficientReserve();
-        protocolFee = CurveMath.protocolFeeOnSell(curveValue);
-        creatorFee = CurveMath.creatorFeeOnSell(curveValue);
+        (protocolFee, creatorFee) = feeManager.calculateSellFees(curveValue);
         reserveOut = curveValue - protocolFee - creatorFee;
     }
 
@@ -147,14 +162,13 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         curveState.soldSupply += tokenAmount;
 
         IERC20(token).safeTransfer(msg.sender, tokenAmount);
-        _sendNative(protocolFeeRecipient, protocolFee);
-        _sendNative(curveState.creator, creatorFee);
+        feeManager.accrueBuyFees{value: protocolFee + creatorFee}(token, curveCost);
 
         uint256 refund = msg.value - reserveIn;
         if (refund != 0) _sendNative(msg.sender, refund);
 
         emit TokensBought(token, msg.sender, tokenAmount, reserveIn, curveCost, protocolFee, creatorFee);
-        _markGraduated(curveState);
+        _markGraduationPending(curveState);
     }
 
     function sell(address token, uint256 tokenAmount, uint256 minReserveOut)
@@ -174,11 +188,46 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         curveState.soldSupply -= tokenAmount;
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), tokenAmount);
+        feeManager.accrueSellFees{value: protocolFee + creatorFee}(token, curveValue);
         _sendNative(msg.sender, reserveOut);
-        _sendNative(protocolFeeRecipient, protocolFee);
-        _sendNative(curveState.creator, creatorFee);
 
         emit TokensSold(token, msg.sender, tokenAmount, reserveOut, curveValue, protocolFee, creatorFee);
+    }
+
+    function graduate(address token, uint256 deadline)
+        external
+        nonReentrant
+        returns (ILiquidityManager.GraduationRecord memory record)
+    {
+        Curve storage curveState = _curves[token];
+        if (curveState.token == address(0)) revert CurveNotFound();
+        if (curveState.lifecycle != Lifecycle.GraduationPending) revert GraduationNotPending();
+        if (msg.sender != curveState.creator && !liquidityManager.isGraduationExecutor(msg.sender)) {
+            revert UnauthorizedGraduation();
+        }
+
+        uint256 tokenAmount = curveState.curveSupply - curveState.soldSupply;
+        uint256 quoteAmount = curveState.reserveBalance;
+        if (tokenAmount == 0 || quoteAmount == 0) revert InsufficientGraduationLiquidity();
+
+        curveState.lifecycle = Lifecycle.Graduated;
+        curveState.reserveBalance = 0;
+        IERC20(token).forceApprove(address(liquidityManager), tokenAmount);
+        record = liquidityManager.createLiquidity{value: quoteAmount}(token, tokenAmount, quoteAmount, deadline);
+        IERC20(token).forceApprove(address(liquidityManager), 0);
+        if (record.tokenAmount != tokenAmount || record.quoteAmount != quoteAmount) {
+            revert GraduationAccountingMismatch();
+        }
+
+        emit Graduated(
+            token,
+            record.liquidityToken,
+            tokenAmount,
+            quoteAmount,
+            record.liquidityAmount,
+            record.lockId,
+            record.unlockTimestamp
+        );
     }
 
     receive() external payable {
@@ -191,7 +240,7 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
     }
 
     function _validateActiveTrade(Curve memory curveState) private pure {
-        if (curveState.graduated) revert AlreadyGraduated();
+        if (curveState.lifecycle != Lifecycle.Active) revert TradingNotActive(curveState.lifecycle);
     }
 
     function _validateTradeAmount(uint256 tokenAmount) private pure {
@@ -200,10 +249,15 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         }
     }
 
-    function _markGraduated(Curve storage curveState) private {
-        if (curveState.soldSupply >= curveState.graduationThreshold && !curveState.graduated) {
-            curveState.graduated = true;
-            emit Graduated(curveState.token, curveState.soldSupply, curveState.reserveBalance);
+    function _markGraduationPending(Curve storage curveState) private {
+        if (curveState.soldSupply >= curveState.graduationThreshold && curveState.lifecycle == Lifecycle.Active) {
+            curveState.lifecycle = Lifecycle.GraduationPending;
+            emit GraduationPending(
+                curveState.token,
+                curveState.soldSupply,
+                curveState.reserveBalance,
+                curveState.curveSupply - curveState.soldSupply
+            );
         }
     }
 
@@ -211,6 +265,6 @@ contract ZonkCurve is IZonkCurve, ReentrancyGuard {
         if (recipient == address(0)) revert InvalidRecipient();
         if (amount == 0) return;
         (bool success,) = recipient.call{value: amount}("");
-        if (!success) revert FeeTransferFailed();
+        if (!success) revert NativeTransferFailed();
     }
 }

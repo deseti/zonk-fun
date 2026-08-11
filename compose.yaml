@@ -6,15 +6,15 @@ services:
     container_name: zonk-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: zonk
-      POSTGRES_USER: zonk
-      POSTGRES_PASSWORD: zonk_local
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
-      - "15434:5432"
+      - "127.0.0.1:15434:5432"
     volumes:
       - zonk_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zonk -d zonk"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,8 +24,6 @@ services:
     image: redis:8-alpine
     container_name: zonk-redis
     restart: unless-stopped
-    ports:
-      - "16380:6379"
     volumes:
       - zonk_redis_data:/data
     healthcheck:
@@ -42,11 +40,11 @@ services:
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 4000
-      APP_ENV: development
-      DATABASE_URL: postgres://zonk:zonk_local@postgres:5432/zonk?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,10 +63,10 @@ services:
       dockerfile: apps/indexer/Dockerfile
     restart: unless-stopped
     environment:
-      INDEXER_MODE: idle
+      INDEXER_MODE: ${INDEXER_MODE:-idle}
       BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:-}
-      DATABASE_URL: postgres://zonk:zonk_local@postgres:5432/zonk?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,7 +84,7 @@ services:
       PORT: 3000
       NEXT_PUBLIC_API_URL: http://localhost:4000
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api:
         condition: service_healthy

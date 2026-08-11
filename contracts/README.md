@@ -1,66 +1,38 @@
-## Foundry
+# Zonk.fun contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+The contract layer is the source of truth for token creation, curve inventory,
+trading reserve, fee policy, and accrued fee liabilities.
 
-Foundry consists of:
+Current modules:
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- `ZonkFactory`: permissionless token creation and creator registry;
+- `ZonkToken`: fixed-supply ERC-20 initialized once by the factory;
+- `ZonkCurve`: native-asset linear bonding curve and reserve accounting;
+- `FeeManager`: governed, capped fee policy and pull-payment accounting;
+- `LiquidityManager`: atomic graduation coordinator with an immutable DEX
+  adapter boundary;
+- `LPLocker`: enforced time lock for fungible LP receipts returned by the
+  adapter.
 
-## Documentation
+No DEX protocol is selected in this repository. A reviewed adapter for the
+selected Base DEX remains required before testnet deployment. The adapter must
+represent every position as a transferable ERC-20 LP receipt; NFT positions
+must be wrapped or custody-normalized by the adapter before integration.
 
-https://book.getfoundry.sh/
+See [FEE_ARCHITECTURE.md](./FEE_ARCHITECTURE.md) for fee calculations, roles,
+claims, and reserve isolation. See
+[LIQUIDITY_ARCHITECTURE.md](./LIQUIDITY_ARCHITECTURE.md) for graduation,
+adapter, LP-lock, recovery, and governance boundaries.
 
-## Usage
-
-### Build
-
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
+## Local validation
 
 ```shell
-$ forge fmt
+forge fmt --check
+forge build
+forge test
 ```
 
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Deployment scripts read runtime configuration through environment-variable
+names. Never pass or commit private keys, mnemonics, authenticated RPC URLs, or
+other credentials in source files or command arguments. No deployment is part
+of the local test suite.
