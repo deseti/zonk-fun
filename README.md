@@ -64,6 +64,17 @@ Set `BASE_SEPOLIA_RPC_URL` in `.env` only when a local validation environment pr
 an RPC endpoint. Base Sepolia is the configured target network; no credentials are
 required for Phase 0.
 
+### Frontend wallet configuration
+
+The frontend uses Privy as its only wallet provider. Set the public
+`NEXT_PUBLIC_PRIVY_APP_ID` in `.env` to enable login and Privy Embedded Smart Wallets.
+The App ID is safe for client-side use; never put Privy authorization keys or other
+secrets in `NEXT_PUBLIC_*` variables. In the Privy Dashboard, enable the desired
+email/social login methods, Embedded Ethereum Wallets, and Smart Wallets for Base
+Sepolia (chain ID `84532`). External wallet login/connectors are not enabled by the
+frontend. Without an App ID, the frontend remains runnable and displays a clear
+configuration state, but Privy login cannot be exercised.
+
 Run the complete local validation suite:
 
 ```shell

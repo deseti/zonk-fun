@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  transpilePackages: ["@zonk/contracts-sdk", "@zonk/types"],
 };
 
 export default nextConfig;

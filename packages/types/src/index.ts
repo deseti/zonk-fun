@@ -1,1 +1,10 @@
-export {};
+export type ApiError = { error: { code: string; message: string } };
+export type BlockRef = { block_number: number; transaction_hash: string; log_index: number };
+export type TokenMetrics = { trade_count: number; buy_count: number; sell_count: number; volume: string; fees: string; market_cap: string | null; holder_count: number | null };
+export type Token = { address: string; creator: string; name: string; symbol: string; initial_supply: string; created_at: BlockRef; metrics: TokenMetrics; curve?: { address: string; sold_supply: string; reserve_balance: string; supply?: string; starting_price?: string; slope?: string; graduation_threshold?: string; lifecycle?: string }; graduation?: { phase: string; liquidity_token?: string; token_amount?: string; quote_amount?: string; liquidity_amount?: string; lock_id?: string; unlock_timestamp?: number } };
+export type TokenPage = { items: Token[]; next_cursor?: string };
+export type Trade = { token_address: string; trader: string; side: string; token_amount: string; reserve_amount: string; curve_value: string; protocol_fee: string; creator_fee: string; block_number: number; transaction_hash: string; log_index: number };
+export type Activity = { event_name: string; decoded: Record<string, unknown>; block_number: number; transaction_hash: string; log_index: number };
+export type TradePage = { items: Trade[]; next_cursor?: string };
+export type ActivityPage = { items: Activity[]; next_cursor?: string };
+export type CreatorProfile = { address: string; token_count: number; volume: string; tokens: Token[]; next_cursor?: string };

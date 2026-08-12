@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@zonk/contracts-sdk": ["../../packages/contracts-sdk/src/index.ts"],
+      "@zonk/types": ["../../packages/types/src/index.ts"]
     }
   },
   "include": [

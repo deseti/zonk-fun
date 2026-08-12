@@ -32,6 +32,7 @@ func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *s
 	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger}
 	r := chi.NewRouter()
 	r.Use(requestID)
+	r.Use(localCORS)
 	r.Use(h.logging)
 	r.Use(timeoutMiddleware(timeout))
 	r.Get("/health", h.health)
@@ -49,6 +50,26 @@ func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *s
 		r.Get("/creators/{address}/tokens", h.creatorTokens)
 	})
 	return r
+}
+func localCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "http://localhost:3000" || origin == "http://127.0.0.1:3000" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
+		}
+		if r.Method == http.MethodOptions {
+			if origin == "http://localhost:3000" || origin == "http://127.0.0.1:3000" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

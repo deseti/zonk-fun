@@ -1,26 +1,18 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+:root { --background: #071014; --foreground: #e5edf0; }
+@theme inline { --color-background: var(--background); --color-foreground: var(--foreground); --font-sans: var(--font-geist-sans); --font-mono: var(--font-geist-mono); }
+* { box-sizing: border-box; }
+body { background: radial-gradient(circle at 80% -10%, #123c46 0, transparent 38rem), var(--background); color: var(--foreground); font-family: Arial, Helvetica, sans-serif; }
+.container { width: min(100% - 2rem, 72rem); margin-inline: auto; }
+.panel { border: 1px solid rgb(255 255 255 / 0.1); border-radius: 1rem; background: rgb(255 255 255 / 0.045); padding: 1.25rem; }
+.button-primary, .button-secondary { display: inline-flex; align-items: center; justify-content: center; border-radius: .75rem; padding: .65rem 1rem; font-size: .875rem; font-weight: 600; transition: background .15s, border-color .15s; }
+.button-primary { background: #8be9f5; color: #082127; }
+.button-primary:hover { background: #b7f3f8; }
+.button-secondary { border: 1px solid rgb(255 255 255 / .16); color: #d9e7ea; background: rgb(255 255 255 / .04); }
+.button-secondary:hover { border-color: rgb(139 233 245 / .6); }
+.button-secondary:disabled { opacity: .55; }
+.badge-success, .badge-warning { border-radius: 999px; padding: .25rem .55rem; font-size: .7rem; white-space: nowrap; }
+.badge-success { background: rgb(52 211 153 / .12); color: #8ff0c9; }
+.badge-warning { background: rgb(251 191 36 / .12); color: #fcd77a; }
+.eyebrow { color: #72d9e6; font-size: .7rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
