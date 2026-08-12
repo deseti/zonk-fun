@@ -44,7 +44,11 @@ func main() {
 	}
 	defer repo.Close()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	handler := api.NewHandler(repo, chainID, requestTimeout, logger)
+	objects, e := api.NewLocalObjectStore(os.Getenv("STORAGE_LOCAL_DIR"))
+	if e != nil {
+		panic(e)
+	}
+	handler := api.NewHandlerWithObjectStore(repo, chainID, requestTimeout, logger, objects)
 	addr := fmt.Sprintf("%s:%s", host, port)
 	fmt.Printf("zonk-api listening on %s\n", addr)
 

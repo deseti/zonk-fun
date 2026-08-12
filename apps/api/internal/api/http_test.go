@@ -42,6 +42,8 @@ func (f *fakeRepo) Trades(context.Context, int64, string, int, string) (TradePag
 func (f *fakeRepo) Activity(context.Context, int64, string, int, string) (ActivityPage, error) {
 	return ActivityPage{Items: []Activity{}}, nil
 }
+func (f *fakeRepo) SaveMetadataDraft(context.Context, MetadataDraft) error                { return nil }
+func (f *fakeRepo) FinalizeMetadata(context.Context, int64, string, string, string) error { return nil }
 func testHandler(repo Repository) http.Handler {
 	return NewHandler(repo, 84532, time.Second, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
@@ -98,6 +100,24 @@ func TestTokenListEmptyAndDetailNotFound(t *testing.T) {
 	r = testHandler(&fakeRepo{tokenErr: ErrNotFound})
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/0x0000000000000000000000000000000000000001", nil))
 	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"not_found"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestTokenDetailReturnsIndexedTokenAndSafeRepositoryError(t *testing.T) {
+	address := "0x0000000000000000000000000000000000000001"
+	indexed := Token{Address: address, Creator: "0x0000000000000000000000000000000000000002", Name: "Zonk", Symbol: "ZK", InitialSupply: "1000", Description: "Indexed metadata", Metrics: Metrics{Volume: "0", Fees: "0"}}
+	r := testHandler(&fakeRepo{token: indexed})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address, nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"description":"Indexed metadata"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	r = testHandler(&fakeRepo{tokenErr: errors.New("private database failure")})
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address, nil))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), `"code":"internal_error"`) || strings.Contains(w.Body.String(), "private") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }

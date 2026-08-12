@@ -43,8 +43,11 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      STORAGE_LOCAL_DIR: /data/zonk-objects
     ports:
       - "127.0.0.1:4000:4000"
+    volumes:
+      - zonk_object_data:/data/zonk-objects
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +70,19 @@ services:
       BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:-}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      INDEXER_START_BLOCK: ${INDEXER_START_BLOCK:-}
+      INDEXER_STOP_BLOCK: ${INDEXER_STOP_BLOCK:-}
+      INDEXER_CONFIRMATIONS: ${INDEXER_CONFIRMATIONS:-6}
+      INDEXER_BATCH_SIZE: ${INDEXER_BATCH_SIZE:-500}
+      INDEXER_RPC_MAX_ATTEMPTS: ${INDEXER_RPC_MAX_ATTEMPTS:-3}
+      INDEXER_RPC_INITIAL_DELAY_MS: ${INDEXER_RPC_INITIAL_DELAY_MS:-100}
+      INDEXER_RPC_MAX_DELAY_MS: ${INDEXER_RPC_MAX_DELAY_MS:-2000}
+      ZONK_INDEXER_CONTRACTS: ${ZONK_INDEXER_CONTRACTS:-}
+      ZONK_FACTORY_ADDRESS: ${ZONK_FACTORY_ADDRESS:-}
+      ZONK_CURVE_ADDRESS: ${ZONK_CURVE_ADDRESS:-}
+      FEE_MANAGER_ADDRESS: ${FEE_MANAGER_ADDRESS:-}
+      LIQUIDITY_MANAGER_ADDRESS: ${LIQUIDITY_MANAGER_ADDRESS:-}
+      LP_LOCKER_ADDRESS: ${LP_LOCKER_ADDRESS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +97,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
         NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL: ${NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}
         NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID:?NEXT_PUBLIC_PRIVY_APP_ID must be set}
+        NEXT_PUBLIC_ZONK_FACTORY_ADDRESS: ${NEXT_PUBLIC_ZONK_FACTORY_ADDRESS:?NEXT_PUBLIC_ZONK_FACTORY_ADDRESS must be set}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -98,3 +115,4 @@ services:
 volumes:
   zonk_postgres_data:
   zonk_redis_data:
+  zonk_object_data:

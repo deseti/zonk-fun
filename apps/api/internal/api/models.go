@@ -6,10 +6,22 @@ type Token struct {
 	Name          string      `json:"name"`
 	Symbol        string      `json:"symbol"`
 	InitialSupply string      `json:"initial_supply"`
+	Description   string      `json:"description,omitempty"`
+	ImageURL      string      `json:"image_url,omitempty"`
+	MetadataURL   string      `json:"metadata_url,omitempty"`
 	CreatedAt     BlockRef    `json:"created_at"`
 	Curve         *Curve      `json:"curve,omitempty"`
 	Metrics       Metrics     `json:"metrics"`
 	Graduation    *Graduation `json:"graduation,omitempty"`
+}
+type MetadataDraft struct {
+	ID            string `json:"draft_id"`
+	Name          string `json:"name"`
+	Symbol        string `json:"symbol"`
+	InitialSupply string `json:"initial_supply"`
+	Description   string `json:"description"`
+	ImageURL      string `json:"image_url"`
+	MetadataURL   string `json:"metadata_url"`
 }
 type BlockRef struct {
 	BlockNumber     int64  `json:"block_number"`

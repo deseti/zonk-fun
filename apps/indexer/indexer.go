@@ -32,8 +32,9 @@ func (x *Indexer) Run(ctx context.Context) error {
 		last = x.cfg.StartBlock - 1
 		lastHash = ""
 	}
-	if last == 0 && lastHash == "" && x.cfg.StartBlock > 0 {
+	if x.cfg.StartBlock > 0 && last < x.cfg.StartBlock {
 		last = x.cfg.StartBlock - 1
+		lastHash = ""
 	}
 	for {
 		select {

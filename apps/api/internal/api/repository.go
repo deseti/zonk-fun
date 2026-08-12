@@ -24,6 +24,8 @@ type Repository interface {
 	Creator(context.Context, int64, string, int, string) (CreatorProfile, error)
 	Trades(context.Context, int64, string, int, string) (TradePage, error)
 	Activity(context.Context, int64, string, int, string) (ActivityPage, error)
+	SaveMetadataDraft(context.Context, MetadataDraft) error
+	FinalizeMetadata(context.Context, int64, string, string, string) error
 }
 type PostgresRepository struct{ pool *pgxpool.Pool }
 
@@ -32,12 +34,21 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 	if e != nil {
 		return nil, e
 	}
-	return &PostgresRepository{pool: p}, nil
+	r := &PostgresRepository{pool: p}
+	if e = r.ensureMetadataSchema(ctx); e != nil {
+		p.Close()
+		return nil, e
+	}
+	return r, nil
+}
+func (r *PostgresRepository) ensureMetadataSchema(ctx context.Context) error {
+	_, e := r.pool.Exec(ctx, `ALTER TABLE tokens ADD COLUMN IF NOT EXISTS description TEXT; ALTER TABLE tokens ADD COLUMN IF NOT EXISTS image_url TEXT; ALTER TABLE tokens ADD COLUMN IF NOT EXISTS metadata_url TEXT; CREATE TABLE IF NOT EXISTS token_metadata_drafts(draft_id TEXT PRIMARY KEY,name TEXT NOT NULL,symbol TEXT NOT NULL,initial_supply NUMERIC(78,0) NOT NULL,description TEXT NOT NULL,image_url TEXT NOT NULL,metadata_url TEXT NOT NULL,token_address TEXT,transaction_hash TEXT,finalized_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
+	return e
 }
 func (r *PostgresRepository) Close()                         { r.pool.Close() }
 func (r *PostgresRepository) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
-const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,t.block_number,t.transaction_hash,t.log_index,
+const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),t.block_number,t.transaction_hash,t.log_index,
  c.curve_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
  m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,
  g.phase,g.liquidity_token_address,g.token_amount,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
@@ -53,7 +64,7 @@ func scanToken(row pgx.Row) (Token, error) {
 	var tc, bc, sc *int64
 	var vol, fees *string
 	var unlock *int64
-	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
+	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
 	if e != nil {
 		return t, e
 	}
@@ -65,6 +76,37 @@ func scanToken(row pgx.Row) (Token, error) {
 		t.Graduation = &Graduation{Phase: *phase, LiquidityToken: value(liq), TokenAmount: value(ta), QuoteAmount: value(qa), LiquidityAmount: value(la), LockID: value(lid), UnlockTimestamp: unlock}
 	}
 	return t, nil
+}
+func (r *PostgresRepository) SaveMetadataDraft(ctx context.Context, d MetadataDraft) error {
+	_, e := r.pool.Exec(ctx, `INSERT INTO token_metadata_drafts(draft_id,name,symbol,initial_supply,description,image_url,metadata_url) VALUES($1,$2,$3,$4,$5,$6,$7)`, d.ID, d.Name, d.Symbol, d.InitialSupply, d.Description, d.ImageURL, d.MetadataURL)
+	return e
+}
+func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, draftID, token, txHash string) error {
+	tx, e := r.pool.Begin(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback(ctx)
+	var name, symbol, supply, description, imageURL, metadataURL string
+	e = tx.QueryRow(ctx, `SELECT d.name,d.symbol,d.initial_supply::text,d.description,d.image_url,d.metadata_url FROM token_metadata_drafts d JOIN tokens t ON t.chain_id=$1 AND lower(t.token_address)=lower($2) AND lower(t.transaction_hash)=lower($3) AND t.is_canonical AND t.name=d.name AND t.symbol=d.symbol AND t.initial_supply=d.initial_supply WHERE d.draft_id=$4 AND d.finalized_at IS NULL`, chain, token, txHash, draftID).Scan(&name, &symbol, &supply, &description, &imageURL, &metadataURL)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if e != nil {
+		return e
+	}
+	result, e := tx.Exec(ctx, `UPDATE tokens SET description=$4,image_url=$5,metadata_url=$6 WHERE chain_id=$1 AND lower(token_address)=lower($2) AND lower(transaction_hash)=lower($3) AND is_canonical`, chain, token, txHash, description, imageURL, metadataURL)
+	if e != nil {
+		return e
+	}
+	if result.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	_, e = tx.Exec(ctx, `UPDATE token_metadata_drafts SET token_address=$2,transaction_hash=$3,finalized_at=now() WHERE draft_id=$1`, draftID, token, txHash)
+	if e != nil {
+		return e
+	}
+	return tx.Commit(ctx)
 }
 func value(v *string) string {
 	if v == nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -8,8 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/go-chi/chi/v5"
+	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,16 +25,20 @@ type Handler struct {
 	chainID int64
 	timeout time.Duration
 	logger  *slog.Logger
+	objects ObjectStore
 }
 
 func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger) http.Handler {
+	return NewHandlerWithObjectStore(repo, chainID, timeout, logger, nil)
+}
+func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger, objects ObjectStore) http.Handler {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger}
+	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger, objects: objects}
 	r := chi.NewRouter()
 	r.Use(requestID)
 	r.Use(localCORS)
@@ -37,7 +46,10 @@ func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *s
 	r.Use(timeoutMiddleware(timeout))
 	r.Get("/health", h.health)
 	r.Get("/readyz", h.ready)
+	r.Get("/objects/*", h.object)
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/token-metadata", h.uploadMetadata)
+		r.Post("/token-metadata/{draft}/finalize", h.finalizeMetadata)
 		r.Get("/tokens", h.tokens)
 		r.Get("/tokens/newest", h.tokens)
 		r.Get("/tokens/trending", h.trending)
@@ -57,7 +69,7 @@ func localCORS(next http.Handler) http.Handler {
 		if origin == "http://localhost:3000" || origin == "http://127.0.0.1:3000" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
 		}
 		if r.Method == http.MethodOptions {
@@ -70,6 +82,150 @@ func localCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+const maxImageBytes = 5 << 20
+
+var transactionHashRE = regexp.MustCompile(`^0x[0-9a-fA-F]{64}$`)
+
+func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
+	if h.objects == nil {
+		writeError(w, 503, "storage_unavailable", "metadata storage is unavailable")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxImageBytes+(1<<20))
+	if e := r.ParseMultipartForm(maxImageBytes + (1 << 20)); e != nil {
+		writeError(w, 400, "invalid_upload", "upload is too large or malformed")
+		return
+	}
+	name, symbol := strings.TrimSpace(r.FormValue("name")), strings.TrimSpace(r.FormValue("symbol"))
+	description, supply := strings.TrimSpace(r.FormValue("description")), strings.TrimSpace(r.FormValue("initial_supply"))
+	if len(name) == 0 || len([]byte(name)) > 64 {
+		writeError(w, 400, "invalid_name", "name must be between 1 and 64 bytes")
+		return
+	}
+	if len(symbol) == 0 || len([]byte(symbol)) > 16 {
+		writeError(w, 400, "invalid_symbol", "symbol must be between 1 and 16 bytes")
+		return
+	}
+	if len(description) == 0 || len([]byte(description)) > 1000 {
+		writeError(w, 400, "invalid_description", "description must be between 1 and 1000 bytes")
+		return
+	}
+	n, ok := new(big.Int).SetString(supply, 10)
+	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+	if !ok || n.Sign() <= 0 || n.Cmp(maxUint256) > 0 {
+		writeError(w, 400, "invalid_supply", "initial supply must be a positive integer in base units")
+		return
+	}
+	file, header, e := r.FormFile("image")
+	if e != nil {
+		writeError(w, 400, "invalid_image", "an image is required")
+		return
+	}
+	defer file.Close()
+	if header.Size <= 0 || header.Size > maxImageBytes {
+		writeError(w, 400, "invalid_image", "image must be at most 5 MB")
+		return
+	}
+	data, e := io.ReadAll(io.LimitReader(file, maxImageBytes+1))
+	if e != nil || len(data) > maxImageBytes {
+		writeError(w, 400, "invalid_image", "image could not be read")
+		return
+	}
+	contentType := http.DetectContentType(data)
+	ext := ""
+	switch contentType {
+	case "image/png":
+		ext = ".png"
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/webp":
+		ext = ".webp"
+	case "image/gif":
+		ext = ".gif"
+	default:
+		writeError(w, 400, "invalid_image", "image must be PNG, JPEG, WebP, or GIF")
+		return
+	}
+	var random [16]byte
+	if _, e = rand.Read(random[:]); e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	id := hex.EncodeToString(random[:])
+	imageKey := filepath.ToSlash(filepath.Join("images", id+ext))
+	metadataKey := filepath.ToSlash(filepath.Join("metadata", id+".json"))
+	imageURL := "/objects/" + imageKey
+	metadataURL := "/objects/" + metadataKey
+	metadata, _ := json.Marshal(map[string]string{"name": name, "symbol": symbol, "description": description, "image": imageURL})
+	if e = h.objects.Put(r.Context(), imageKey, bytes.NewReader(data)); e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	if e = h.objects.Put(r.Context(), metadataKey, bytes.NewReader(metadata)); e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	draft := MetadataDraft{ID: id, Name: name, Symbol: symbol, InitialSupply: supply, Description: description, ImageURL: imageURL, MetadataURL: metadataURL}
+	if e = h.repo.SaveMetadataDraft(r.Context(), draft); e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	writeJSON(w, 201, draft)
+}
+func (h *Handler) finalizeMetadata(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TokenAddress    string `json:"token_address"`
+		TransactionHash string `json:"transaction_hash"`
+	}
+	if e := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); e != nil {
+		writeError(w, 400, "invalid_request", "invalid JSON body")
+		return
+	}
+	cleanAddress := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(in.TokenAddress)), "0x")
+	if len(cleanAddress) != 40 {
+		writeError(w, 400, "invalid_request", "valid token address and transaction hash are required")
+		return
+	}
+	if _, e := hex.DecodeString(cleanAddress); e != nil || !transactionHashRE.MatchString(in.TransactionHash) {
+		writeError(w, 400, "invalid_request", "valid token address and transaction hash are required")
+		return
+	}
+	in.TokenAddress = "0x" + cleanAddress
+	e := h.repo.FinalizeMetadata(r.Context(), h.chainID, chi.URLParam(r, "draft"), in.TokenAddress, in.TransactionHash)
+	if errors.Is(e, ErrNotFound) {
+		writeError(w, 409, "not_indexed", "confirmed token has not been indexed yet")
+		return
+	}
+	if e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	token, e := h.repo.Token(r.Context(), h.chainID, in.TokenAddress)
+	if e != nil {
+		h.internal(w, r, e)
+		return
+	}
+	writeJSON(w, 200, token)
+}
+func (h *Handler) object(w http.ResponseWriter, r *http.Request) {
+	if h.objects == nil {
+		http.NotFound(w, r)
+		return
+	}
+	key := chi.URLParam(r, "*")
+	f, e := h.objects.Open(r.Context(), key)
+	if e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if strings.HasSuffix(key, ".json") {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	_, _ = io.Copy(w, f)
 }
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
