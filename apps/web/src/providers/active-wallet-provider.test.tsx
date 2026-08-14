@@ -48,5 +48,6 @@ describe("active wallet selection", () => {
     view.rerender(<ActiveWalletProvider><Probe /></ActiveWalletProvider>);
     expect(await screen.findByText("mode:embedded")).toBeTruthy();
     expect(screen.getByText(`address:${embeddedAddress}`)).toBeTruthy();
+    expect(screen.queryByText(`address:${externalAddress}`)).toBeNull();
   });
 });

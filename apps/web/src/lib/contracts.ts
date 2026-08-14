@@ -12,7 +12,6 @@ import {
   graduationSettlementExecutorV3Abi,
   permanentLPFeeVaultV3Abi,
   permanentLPCustodianV3Abi,
-  maxInputWithSlippage,
   minOutputWithSlippage,
   parseTokenLaunchedReceipt,
   parseTradeReceipt,

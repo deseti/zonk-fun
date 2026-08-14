@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { usePrivy, useWallets, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
 import { getAddress, type Address } from "viem";
 import { isExternalWallet, isPrivyEmbeddedWallet, parsePrivyChainId } from "@/lib/wallet";
@@ -31,25 +31,14 @@ export function ActiveWalletProvider({ children }: { children: ReactNode }) {
   const embeddedAddress = smartAddress && validAddress(smartAddress) ? getAddress(smartAddress) : undefined;
   const externalAddress = externalWallet?.address && validAddress(externalWallet.address) ? getAddress(externalWallet.address) : undefined;
   const [mode, setMode] = useState<ActiveWalletMode>(externalWallet ? "external" : "embedded");
-  const observedExternalRef = useRef<string | undefined>(undefined);
-
-  useEffect(() => {
-    const next = externalAddress?.toLowerCase();
-    if (!next) {
-      observedExternalRef.current = undefined;
-      setMode((current) => current === "external" ? "embedded" : current);
-      return;
-    }
-    if (next !== observedExternalRef.current) setMode("external");
-    observedExternalRef.current = next;
-  }, [externalAddress]);
+  const effectiveMode = mode === "external" && externalAddress ? "external" : "embedded";
 
   const value = useMemo<ActiveWalletContextValue>(() => {
-    const activeWallet = mode === "external" ? externalWallet : embeddedWallet;
+    const activeWallet = effectiveMode === "external" ? externalWallet : embeddedWallet;
     return {
-      mode,
+      mode: effectiveMode,
       selectMode: setMode,
-      activeAddress: mode === "external" ? externalAddress : embeddedAddress,
+      activeAddress: effectiveMode === "external" ? externalAddress : embeddedAddress,
       activeChainId: parsePrivyChainId(activeWallet?.chainId),
       activeWallet,
       embeddedAddress,
@@ -57,7 +46,7 @@ export function ActiveWalletProvider({ children }: { children: ReactNode }) {
       externalAddress,
       externalWallet,
     };
-  }, [embeddedAddress, embeddedWallet, externalAddress, externalWallet, mode]);
+  }, [embeddedAddress, embeddedWallet, externalAddress, externalWallet, effectiveMode]);
 
   return <ActiveWalletContext.Provider value={value}>{children}</ActiveWalletContext.Provider>;
 }

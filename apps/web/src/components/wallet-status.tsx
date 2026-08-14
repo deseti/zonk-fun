@@ -1,11 +1,12 @@
 "use client";
 
-import { useCreateWallet, useLogin, usePrivy, useWallets, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
+import { useConnectWallet, useCreateWallet, useLogin, usePrivy, useWallets, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
 import { useSmartWallets, type SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
 import { baseSepolia } from "@zonk/contracts-sdk";
 import { useState, type ReactNode } from "react";
 import { isBaseSepolia, validAddress } from "@/lib/chain";
-import { derivePrivyWalletState, parsePrivyChainId, privyLoginMethods } from "@/lib/wallet";
+import { derivePrivyWalletState, isExternalWallet, isPrivyEmbeddedWallet, parsePrivyChainId, privyExternalWalletList, privyLoginMethods } from "@/lib/wallet";
+import { useActiveWallet, walletModeLabel } from "@/providers/active-wallet-provider";
 
 const short = (value?: string) => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "";
 
@@ -31,6 +32,7 @@ export function WalletStatus() {
   const { wallets } = useWallets();
   const { client, getClientForChain } = useSmartWallets();
   const { createWallet } = useCreateWallet();
+  const { mode, selectMode, activeAddress, embeddedAddress, externalAddress } = useActiveWallet();
   const [loginPending, setLoginPending] = useState(false);
   const [createPending, setCreatePending] = useState(false);
   const [switchPending, setSwitchPending] = useState(false);
@@ -40,15 +42,27 @@ export function WalletStatus() {
     onComplete: () => setLoginPending(false),
     onError: () => setLoginPending(false),
   });
-  const embedded = wallets.find((wallet) => wallet.walletClientType === "privy");
+  const { connectWallet } = useConnectWallet({
+    onSuccess: () => { setActionError(null); selectMode("external"); },
+    onError: () => setActionError("External wallet connection was not completed."),
+  });
+  const embedded = wallets.find(isPrivyEmbeddedWallet);
+  const external = wallets.find(isExternalWallet);
   const smartAddress = user?.smartWallet?.address;
   const walletAddress = smartAddress && validAddress(smartAddress) ? smartAddress : undefined;
-  const accountAddress = walletAddress ?? (embedded?.address && validAddress(embedded.address) ? embedded.address : undefined);
   const chainId = parsePrivyChainId(embedded?.chainId);
   const activeSmartWalletClient = chainClient ?? client;
   const runLogin = () => { setActionError(null); setLoginPending(true); login({ loginMethods: [...privyLoginMethods] }); };
+  const runConnectExternal = () => {
+    setActionError(null);
+    connectWallet({
+      description: "Connect an external EVM wallet. Zonk.fun keeps it separate from the Privy embedded smart wallet used for create and trade transactions.",
+      walletChainType: "ethereum-only",
+      walletList: [...privyExternalWalletList],
+    });
+  };
   const runCreateWallet = async () => { setActionError(null); setCreatePending(true); try { await createWallet(); } catch { setActionError("Wallet creation is unavailable right now."); } finally { setCreatePending(false); } };
-  const switchNetwork = async () => { if (!embedded) return; setActionError(null); setSwitchPending(true); try { const nextClient = await switchPrivyEmbeddedWallet(embedded, getClientForChain); setChainClient(nextClient ?? null); } catch { setChainClient(null); setActionError("Network switching is unavailable right now."); } finally { setSwitchPending(false); } };
+  const switchNetwork = async () => { const wallet = mode === "external" ? external : embedded; if (!wallet) return; setActionError(null); setSwitchPending(true); try { await wallet.switchChain(baseSepolia.id); if (mode === "embedded") { const nextClient = await getClientForChain({ id: baseSepolia.id }); setChainClient(nextClient ?? null); } } catch { if (mode === "embedded") setChainClient(null); setActionError("Network switching is unavailable right now."); } finally { setSwitchPending(false); } };
   const runLogout = async () => { setLoginPending(false); await logoutPrivy(logout, setActionError); };
 
   const state = derivePrivyWalletState({
@@ -63,16 +77,20 @@ export function WalletStatus() {
     error,
   });
 
-  if (!authenticated) return <div className="flex items-center gap-2">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className="button-primary" onClick={runLogin}>Log in with Privy</button></div>;
+  if (!authenticated) return <div className="flex items-center gap-2">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className="button-primary" onClick={runLogin}>Log in: wallet, email, or social</button></div>;
 
-  return <div className="flex items-center gap-2" aria-label="Privy account controls">
-    <span className="text-xs text-zinc-400">{short(accountAddress) || short(user?.id) || "Privy account"}</span>
+  const activeChainId = mode === "external" ? parsePrivyChainId(external?.chainId) : chainId;
+
+  return <div className="flex flex-wrap items-center gap-2" aria-label="Privy account controls">
+    <span className="text-xs text-white">Active: {walletModeLabel(mode)} {short(activeAddress)}</span>
+    {embeddedAddress && <button className={mode === "embedded" ? "button-primary" : "button-secondary"} aria-pressed={mode === "embedded"} onClick={() => selectMode("embedded")}>Embedded {short(embeddedAddress)}</button>}
+    {externalAddress ? <button className={mode === "external" ? "button-primary" : "button-secondary"} aria-pressed={mode === "external"} onClick={() => selectMode("external")}>External {short(externalAddress)}</button> : <button className="button-secondary" onClick={runConnectExternal}>Connect external wallet</button>}
     {actionError && <span className="text-xs text-red-300">{actionError}</span>}
     {!ready && <span className="text-sm text-zinc-400">Privy loading…</span>}
     {ready && error && <span className="text-sm text-red-300">Privy is unavailable</span>}
-    {ready && !error && state === "wrong_network" && <><span className="badge-warning">Wrong network</span><button className="button-secondary" disabled={!embedded || switchPending} onClick={() => void switchNetwork()}>{switchPending ? "Switching…" : "Use Base Sepolia"}</button></>}
+    {ready && !error && activeChainId !== baseSepolia.id && <><span className="badge-warning">Wrong network</span><button className="button-secondary" disabled={!(mode === "external" ? external : embedded) || switchPending} onClick={() => void switchNetwork()}>{switchPending ? "Switching…" : "Use Base Sepolia"}</button></>}
     {ready && !error && (state === "logged_in_without_embedded_wallet" || state === "embedded_wallet_creating") && <button className="button-secondary" disabled={createPending} onClick={() => void runCreateWallet()}>{createPending ? "Creating wallet…" : "Create embedded wallet"}</button>}
-    {ready && !error && state === "smart_wallet_ready" && <span className="badge-success">Base Sepolia</span>}
+    {ready && !error && activeChainId === baseSepolia.id && <span className="badge-success">Base Sepolia</span>}
     <button className="button-secondary" onClick={() => void runLogout()}>Log out</button>
   </div>;
 }
@@ -82,10 +100,8 @@ export function PrivyWalletUnavailable() {
 }
 
 export function NetworkGuard({ children }: { children: ReactNode }) {
-  const { ready, authenticated, user } = usePrivy();
-  const { wallets } = useWallets();
-  const embedded = wallets.find((wallet) => wallet.walletClientType === "privy");
-  const chainId = parsePrivyChainId(embedded?.chainId);
-  if (ready && authenticated && !isBaseSepolia(chainId)) return <div className="panel border-amber-400/40"><h2 className="text-lg font-semibold text-amber-200">Unsupported network</h2><p className="mt-2 text-sm text-zinc-300">Privy smart-wallet actions are limited to Base Sepolia.</p><p className="mt-2 break-all text-xs text-zinc-500">Smart wallet: {user?.smartWallet?.address ?? "not ready"}</p></div>;
+  const { ready, authenticated } = usePrivy();
+  const { activeChainId: chainId, mode, activeAddress } = useActiveWallet();
+  if (ready && authenticated && !isBaseSepolia(chainId)) return <div className="panel border-amber-400/40"><h2 className="text-lg font-semibold text-amber-200">Unsupported network</h2><p className="mt-2 text-sm text-zinc-300">{walletModeLabel(mode)} actions are limited to Base Sepolia.</p><p className="mt-2 break-all text-xs text-zinc-500">Active wallet: {activeAddress ?? "not connected"}</p></div>;
   return <>{children}</>;
 }
