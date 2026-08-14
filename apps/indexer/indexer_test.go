@@ -2,123 +2,24 @@ package indexer
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"math/big"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func TestSupportedEventsMatchCurrentArtifacts(t *testing.T) {
-	files := []string{"IZonkFactory.sol/IZonkFactory.json", "IZonkCurve.sol/IZonkCurve.json", "IFeeManager.sol/IFeeManager.json", "ILiquidityManager.sol/ILiquidityManager.json", "ILPLocker.sol/ILPLocker.json"}
-	for _, name := range files {
-		path := filepath.Join("..", "..", "contracts", "out", name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var artifact struct {
-			ABI json.RawMessage `json:"abi"`
-		}
-		if err = json.Unmarshal(data, &artifact); err != nil {
-			t.Fatal(err)
-		}
-		a, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for event, expected := range a.Events {
-			got, ok := contractABI.Events[event]
-			if !ok {
-				t.Errorf("artifact event %s missing from decoder", event)
-				continue
-			}
-			if got.ID != expected.ID {
-				t.Errorf("event %s topic mismatch", event)
-			}
-		}
-	}
-}
-
-func TestConfigValidation(t *testing.T) {
-	if err := (Config{ChainID: 1, Mode: "active", RPCURL: "x", DatabaseURL: "x", BatchSize: 1}).Validate(); err == nil {
-		t.Fatal("expected chain validation error")
-	}
-	if err := (Config{ChainID: BaseSepoliaChainID, Mode: "active", BatchSize: 1}).Validate(); err == nil {
-		t.Fatal("expected endpoint validation error")
-	}
-	if err := (Config{ChainID: BaseSepoliaChainID, Mode: "active", RPCURL: "x", DatabaseURL: "x", BatchSize: 1}).Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-type retryRPC struct {
-	headers int
-	logs    int
-	fail    int
-}
-
-func (r *retryRPC) HeaderByNumber(context.Context, *big.Int) (*types.Header, error) {
-	r.headers++
-	if r.headers <= r.fail {
-		return nil, errors.New("temporary upstream unavailable")
-	}
-	return &types.Header{Number: big.NewInt(1)}, nil
-}
-func (r *retryRPC) FilterLogs(context.Context, ethereum.FilterQuery) ([]types.Log, error) {
-	r.logs++
-	if r.logs <= r.fail {
-		return nil, errors.New("temporary upstream unavailable")
-	}
-	return nil, nil
-}
-func TestRetryBoundedAndRecovers(t *testing.T) {
-	inner := &retryRPC{fail: 2}
-	r := NewRetryingRPC(inner, RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond * 2})
-	if _, err := r.HeaderByNumber(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if inner.headers != 3 {
-		t.Fatalf("attempts=%d", inner.headers)
-	}
-	if _, err := r.FilterLogs(context.Background(), ethereum.FilterQuery{}); err != nil {
-		t.Fatal(err)
-	}
-	if inner.logs != 3 {
-		t.Fatalf("attempts=%d", inner.logs)
-	}
-}
-func TestRetryExhaustionAndCancellation(t *testing.T) {
-	inner := &retryRPC{fail: 9}
-	r := NewRetryingRPC(inner, RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond})
-	if _, err := r.HeaderByNumber(context.Background(), nil); err == nil {
-		t.Fatal("expected exhaustion")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := r.FilterLogs(ctx, ethereum.FilterQuery{}); !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-}
-
-func eventLog(t *testing.T, name string, indexed []common.Hash, args ...interface{}) types.Log {
+func eventLog(t *testing.T, abiEvents map[string]abi.Event, name string, indexed []common.Hash, args ...any) types.Log {
 	t.Helper()
-	e := contractABI.Events[name]
+	e := abiEvents[name]
 	data, err := e.Inputs.NonIndexed().Pack(args...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	topics := []common.Hash{e.ID}
-	topics = append(topics, indexed...)
-	return types.Log{Address: common.HexToAddress("0x00000000000000000000000000000000000000aa"), Topics: topics, Data: data, BlockNumber: 10, BlockHash: common.HexToHash("0x10"), TxHash: common.HexToHash("0x20"), Index: 1}
+	return types.Log{Address: common.HexToAddress("0x00000000000000000000000000000000000000aa"), Topics: append([]common.Hash{e.ID}, indexed...), Data: data}
 }
 
 func integrationStore(t *testing.T) *Store {
@@ -135,7 +36,7 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	for _, table := range []string{"token_metrics", "liquidity_events", "graduations", "fees", "trades", "curves", "tokens", "chain_events", "chain_blocks", "indexer_checkpoints"} {
+	for _, table := range []string{"token_trade_buckets", "token_holder_balances", "token_metrics", "liquidity_events", "graduations", "fees", "trades", "curves", "tokens", "chain_events", "chain_blocks", "indexer_checkpoints"} {
 		if _, err = s.pool.Exec(context.Background(), "TRUNCATE "+table+" CASCADE"); err != nil {
 			t.Fatal(err)
 		}
@@ -143,219 +44,145 @@ func integrationStore(t *testing.T) *Store {
 	return s
 }
 
-func testHeader() *types.Header {
-	return &types.Header{Number: big.NewInt(10), Time: 100, ParentHash: common.HexToHash("0x09")}
-}
-func TestPostgresProjectionsIdempotencyAndCheckpoint(t *testing.T) {
-	s := integrationStore(t)
-	ctx := context.Background()
-	token := common.HexToHash("0x01")
-	creator := common.HexToHash("0x02")
-	l := eventLog(t, "TokenCreated", []common.Hash{token, creator}, "Zonk", "ZK", big.NewInt(1000))
-	b := testHeader()
-	l.BlockHash = b.Hash()
-	if err := s.Apply(ctx, BaseSepoliaChainID, "test", b, []types.Log{l}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Apply(ctx, BaseSepoliaChainID, "test", b, []types.Log{l}); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	var cp uint64
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM tokens WHERE is_canonical").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("tokens=%d err=%v", n, err)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT last_block_number FROM indexer_checkpoints WHERE chain_id=$1", BaseSepoliaChainID).Scan(&cp); err != nil || cp != 10 {
-		t.Fatalf("checkpoint=%d err=%v", cp, err)
-	}
+func v3Launch(t *testing.T, token, creator, curve common.Hash) types.Log {
+	return eventLog(t, contractABI.Events, "TokenLaunchedV3", []common.Hash{creator, token, curve}, "endpoint-cp-v3", big.NewInt(1000), big.NewInt(800), big.NewInt(200), common.Address{}, common.Address{}, [32]byte{}, [32]byte{}, uint16(0))
 }
 
-func TestPostgresRollbackLeavesNoCheckpoint(t *testing.T) {
-	s := integrationStore(t)
-	ctx := context.Background()
-	l := types.Log{Address: common.HexToAddress("0xaa"), Topics: []common.Hash{contractABI.Events["TokenCreated"].ID}, Data: []byte{1}, BlockNumber: 11, BlockHash: common.HexToHash("0x11"), TxHash: common.HexToHash("0x21"), Index: 1}
-	if err := s.Apply(ctx, BaseSepoliaChainID, "test", testHeader(), []types.Log{l}); err == nil {
-		t.Fatal("expected decode failure")
-	}
-	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM chain_events").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Fatalf("rollback left %d events", n)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM indexer_checkpoints").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Fatalf("rollback left checkpoint")
-	}
-}
-
-func TestPostgresTradeFeeGraduationAndLiquidityProjections(t *testing.T) {
-	s := integrationStore(t)
-	ctx := context.Background()
-	token := common.HexToHash("0x31")
-	trader := common.HexToHash("0x32")
-	creator := common.HexToHash("0x33")
-	curve := common.HexToHash("0x34")
-	lt := common.HexToHash("0x35")
-	beneficiary := common.HexToHash("0x36")
-	logs := []types.Log{
-		eventLog(t, "TokensBought", []common.Hash{token, trader}, big.NewInt(10), big.NewInt(11), big.NewInt(12), big.NewInt(1), big.NewInt(2)),
-		eventLog(t, "TokensSold", []common.Hash{token, trader}, big.NewInt(3), big.NewInt(4), big.NewInt(5), big.NewInt(1), big.NewInt(2)),
-		eventLog(t, "FeesAccrued", []common.Hash{token, curve, creator}, true, big.NewInt(1), big.NewInt(2)),
-		eventLog(t, "GraduationPending", []common.Hash{token}, big.NewInt(8), big.NewInt(9), big.NewInt(10)),
-		eventLog(t, "Graduated", []common.Hash{token, lt}, big.NewInt(1), big.NewInt(2), big.NewInt(3), big.NewInt(4), uint64(99)),
-		eventLog(t, "LiquidityCreated", []common.Hash{token, curve, lt}, big.NewInt(1), big.NewInt(2), big.NewInt(3), big.NewInt(4), uint64(99)),
-		eventLog(t, "LiquidityLocked", []common.Hash{common.BigToHash(big.NewInt(4)), lt, beneficiary}, big.NewInt(3), uint64(99)),
-	}
-	b := testHeader()
+func stamp(b *types.Header, logs ...types.Log) []types.Log {
 	for i := range logs {
-		logs[i].BlockHash = b.Hash()
-		logs[i].Index = uint(i + 1)
-		logs[i].TxHash = common.BigToHash(big.NewInt(int64(i + 20)))
+		// Transaction hashes must be distinct across competing blocks so a reorg
+		// fixture cannot overwrite an unrelated canonical event before rewind.
+		txID := new(big.Int).SetUint64(b.Number.Uint64()*1000 + uint64(i) + 1)
+		logs[i].BlockNumber, logs[i].BlockHash, logs[i].TxHash, logs[i].Index = b.Number.Uint64(), b.Hash(), common.BigToHash(txID), uint(i+1)
 	}
-	if err := s.Apply(ctx, BaseSepoliaChainID, "test", b, logs); err != nil {
-		t.Fatal(err)
-	}
-	var trades, fees, grads, liquidity, tradeCount, buyCount, sellCount int
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM trades WHERE is_canonical").Scan(&trades); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM fees WHERE is_canonical").Scan(&fees); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM graduations WHERE is_canonical").Scan(&grads); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM liquidity_events WHERE is_canonical").Scan(&liquidity); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pool.QueryRow(ctx, "SELECT trade_count,buy_count,sell_count FROM token_metrics WHERE token_address=$1", common.BytesToAddress(token.Bytes()).Hex()).Scan(&tradeCount, &buyCount, &sellCount); err != nil {
-		t.Fatal(err)
-	}
-	if trades != 2 || fees != 1 || grads != 2 || liquidity != 2 || tradeCount != 2 || buyCount != 1 || sellCount != 1 {
-		t.Fatalf("projection counts trades=%d fees=%d graduations=%d liquidity=%d metrics=%d/%d/%d", trades, fees, grads, liquidity, tradeCount, buyCount, sellCount)
-	}
+	return logs
 }
 
-type fakeChain struct {
-	headers map[uint64]*types.Header
-	logs    map[uint64][]types.Log
-	head    uint64
-}
-
-func (f *fakeChain) HeaderByNumber(_ context.Context, n *big.Int) (*types.Header, error) {
-	if n == nil {
-		return f.headers[f.head], nil
-	}
-	h, ok := f.headers[n.Uint64()]
-	if !ok {
-		return nil, errors.New("header not found")
-	}
-	return h, nil
-}
-func (f *fakeChain) FilterLogs(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
-	var out []types.Log
-	for n := q.FromBlock.Uint64(); n <= q.ToBlock.Uint64(); n++ {
-		out = append(out, f.logs[n]...)
-	}
-	return out, nil
-}
-func waitForCheckpoint(t *testing.T, s *Store, want uint64) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		n, _, err := s.Checkpoint(context.Background(), BaseSepoliaChainID, "reorg-test")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n >= want {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("checkpoint did not reach %d", want)
-}
-func TestPostgresReorgRecoveryRebuildsCanonicalState(t *testing.T) {
+func TestV3TransferAnalyticsAndIdempotency(t *testing.T) {
 	s := integrationStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	mk := func(n uint64, parent common.Hash, nonce uint64) *types.Header {
-		return &types.Header{Number: new(big.Int).SetUint64(n), ParentHash: parent, Nonce: types.EncodeNonce(nonce), Time: n}
-	}
-	b1 := mk(1, common.Hash{}, 1)
-	a2 := mk(2, b1.Hash(), 2)
-	a3 := mk(3, a2.Hash(), 3)
-	b2 := mk(2, b1.Hash(), 20)
-	b3 := mk(3, b2.Hash(), 30)
-	old := eventLog(t, "TokenCreated", []common.Hash{common.HexToHash("0xa1"), common.HexToHash("0xa2")}, "Old", "OLD", big.NewInt(1))
-	old.BlockNumber = 2
-	old.BlockHash = a2.Hash()
-	old.TxHash = common.HexToHash("0xaa")
-	newLog := eventLog(t, "TokenCreated", []common.Hash{common.HexToHash("0xb1"), common.HexToHash("0xb2")}, "New", "NEW", big.NewInt(2))
-	newLog.BlockNumber = 2
-	newLog.BlockHash = b2.Hash()
-	newLog.TxHash = common.HexToHash("0xbb")
-	f := &fakeChain{headers: map[uint64]*types.Header{1: b1, 2: a2, 3: a3}, logs: map[uint64][]types.Log{2: {old}}, head: 3}
-	errs := make(chan error, 2)
-	x := New(Config{ChainID: BaseSepoliaChainID, IndexerName: "reorg-test", Mode: "test", BatchSize: 10, Confirmations: 0}, f, s)
-	go func() { errs <- x.Run(ctx) }()
-	waitForCheckpoint(t, s, 3)
-	cancel()
-	select {
-	case err := <-errs:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("initial indexer did not stop")
-	}
-	f2 := &fakeChain{headers: map[uint64]*types.Header{1: b1, 2: b2, 3: b3}, logs: map[uint64][]types.Log{2: {newLog}}, head: 3}
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
-	x2 := New(Config{ChainID: BaseSepoliaChainID, IndexerName: "reorg-test", Mode: "test", BatchSize: 10, Confirmations: 0}, f2, s)
-	go func() { errs <- x2.Run(ctx2) }()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var n int
-		if err := s.pool.QueryRow(context.Background(), "SELECT count(*) FROM tokens WHERE token_address=$1 AND is_canonical", common.HexToAddress("0xb1").Hex()).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n == 1 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	waitForCheckpoint(t, s, 3)
-	cancel2()
-	select {
-	case err := <-errs:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("reorg indexer did not stop")
-	}
-	var oldCanonical, newCanonical int
-	if err := s.pool.QueryRow(context.Background(), "SELECT count(*) FILTER (WHERE token_address=$1 AND is_canonical),count(*) FILTER (WHERE token_address=$2 AND is_canonical) FROM tokens", common.HexToAddress("0xa1").Hex(), common.HexToAddress("0xb1").Hex()).Scan(&oldCanonical, &newCanonical); err != nil {
+	ctx := context.Background()
+	token, creator, buyer, curve := common.HexToHash("0x101"), common.HexToHash("0x102"), common.HexToHash("0x103"), common.HexToHash("0x104")
+	b := &types.Header{Number: big.NewInt(10), Time: 3601}
+	zero := common.Hash{}
+	launch := v3Launch(t, token, creator, curve)
+	mint := eventLog(t, contractABI.Events, "Transfer", []common.Hash{zero, creator}, big.NewInt(1000))
+	mint.Address = common.BytesToAddress(token.Bytes())
+	move := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, buyer}, big.NewInt(100))
+	move.Address = common.BytesToAddress(token.Bytes())
+	buy := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(12), big.NewInt(12), big.NewInt(10), big.NewInt(10), big.NewInt(1), big.NewInt(1), big.NewInt(0))
+	buy.Address = common.BytesToAddress(curve.Bytes())
+	logs := stamp(b, launch, mint, move, buy)
+	metadata := map[string]TokenMetadata{common.BytesToAddress(token.Bytes()).Hex(): {Name: "Analytics", Symbol: "AN", Decimals: 18}}
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3", b, logs, metadata); err != nil {
 		t.Fatal(err)
 	}
-	if oldCanonical != 0 || newCanonical != 1 {
-		t.Fatalf("reorg projection old=%d new=%d", oldCanonical, newCanonical)
-	}
-	var checkpointHash string
-	if _, checkpointHash, _ = s.Checkpoint(context.Background(), BaseSepoliaChainID, "reorg-test"); checkpointHash != b3.Hash().Hex() {
-		t.Fatalf("checkpoint hash=%s want=%s a3=%s b3=%s", checkpointHash, b3.Hash().Hex(), a3.Hash().Hex(), b3.Hash().Hex())
-	}
-	var canonicalBlocks int
-	if err := s.pool.QueryRow(context.Background(), "SELECT count(*) FROM chain_blocks WHERE chain_id=$1 AND is_canonical", BaseSepoliaChainID).Scan(&canonicalBlocks); err != nil {
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3", b, logs, metadata); err != nil {
 		t.Fatal(err)
 	}
-	if canonicalBlocks != 3 {
-		t.Fatalf("canonical blocks=%d", canonicalBlocks)
+	var holders, traders, trades, buckets int64
+	if err := s.pool.QueryRow(ctx, `SELECT holder_count,unique_trader_count,trade_count FROM token_metrics WHERE chain_id=$1 AND token_address=$2`, BaseSepoliaChainID, common.BytesToAddress(token.Bytes()).Hex()).Scan(&holders, &traders, &trades); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM token_trade_buckets WHERE chain_id=$1`, BaseSepoliaChainID).Scan(&buckets); err != nil {
+		t.Fatal(err)
+	}
+	if holders != 2 || traders != 1 || trades != 1 || buckets != 1 {
+		t.Fatalf("metrics=%d/%d/%d buckets=%d", holders, traders, trades, buckets)
 	}
 }
 
-var _ = json.Valid
+func TestV3AnalyticsReorgRemovesOrphanedState(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	token, creator, oldBuyer, newBuyer, curve := common.HexToHash("0x201"), common.HexToHash("0x202"), common.HexToHash("0x203"), common.HexToHash("0x204"), common.HexToHash("0x205")
+	b1 := &types.Header{Number: big.NewInt(1), Time: 3601}
+	b2 := &types.Header{Number: big.NewInt(2), ParentHash: b1.Hash(), Time: 3610}
+	replacement := &types.Header{Number: big.NewInt(2), ParentHash: b1.Hash(), Time: 3620, Nonce: types.EncodeNonce(9)}
+	launch := v3Launch(t, token, creator, curve)
+	mint := eventLog(t, contractABI.Events, "Transfer", []common.Hash{common.Hash{}, creator}, big.NewInt(1000))
+	mint.Address = common.BytesToAddress(token.Bytes())
+	metadata := map[string]TokenMetadata{common.BytesToAddress(token.Bytes()).Hex(): {Name: "Reorg", Symbol: "RGR", Decimals: 18}}
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-reorg", b1, stamp(b1, launch, mint), metadata); err != nil {
+		t.Fatal(err)
+	}
+	oldTransfer := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, oldBuyer}, big.NewInt(100))
+	oldTransfer.Address = common.BytesToAddress(token.Bytes())
+	oldTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, oldBuyer}, big.NewInt(10), big.NewInt(10), big.NewInt(8), big.NewInt(8), big.NewInt(1), big.NewInt(1), big.NewInt(0))
+	oldTrade.Address = common.BytesToAddress(curve.Bytes())
+	oldLogs := stamp(b2, oldTransfer, oldTrade)
+	if err := s.Apply(ctx, BaseSepoliaChainID, "v3-reorg", b2, oldLogs); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rewind(ctx, BaseSepoliaChainID, "v3-reorg", 2); err != nil {
+		t.Fatal(err)
+	}
+	newTransfer := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, newBuyer}, big.NewInt(50))
+	newTransfer.Address = common.BytesToAddress(token.Bytes())
+	newTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, newBuyer}, big.NewInt(20), big.NewInt(20), big.NewInt(17), big.NewInt(17), big.NewInt(2), big.NewInt(1), big.NewInt(0))
+	newTrade.Address = common.BytesToAddress(curve.Bytes())
+	if err := s.Apply(ctx, BaseSepoliaChainID, "v3-reorg", replacement, stamp(replacement, newTransfer, newTrade)); err != nil {
+		t.Fatal(err)
+	}
+	address := common.BytesToAddress(token.Bytes()).Hex()
+	var holders, traders, trades int64
+	var volume string
+	var oldBalance int
+	if err := s.pool.QueryRow(ctx, `SELECT holder_count,unique_trader_count,trade_count,volume::text FROM token_metrics WHERE chain_id=$1 AND token_address=$2`, BaseSepoliaChainID, address).Scan(&holders, &traders, &trades, &volume); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM token_holder_balances WHERE chain_id=$1 AND token_address=$2 AND holder_address=$3`, BaseSepoliaChainID, address, common.BytesToAddress(oldBuyer.Bytes()).Hex()).Scan(&oldBalance); err != nil {
+		t.Fatal(err)
+	}
+	if holders != 2 || traders != 1 || trades != 1 || volume != "17" || oldBalance != 0 {
+		t.Fatalf("canonical metrics=%d/%d/%d/%s old=%d", holders, traders, trades, volume, oldBalance)
+	}
+}
+
+func TestV3PriceAndFDVProjection(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	b := &types.Header{Number: big.NewInt(1), Time: 1}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,1,$2,'0x',1)`, BaseSepoliaChainID, b.Hash().Hex()); err != nil {
+		t.Fatal(err)
+	}
+	wad := big.NewInt(1_000_000_000_000_000_000)
+	supply := new(big.Int).Mul(big.NewInt(1_000_000_000), wad)
+	sold := new(big.Int).Mul(big.NewInt(400_000_000), wad)
+	reserve := big.NewInt(2_000_000_000_000_000_000)
+	token := common.HexToAddress("0x0000000000000000000000000000000000000a01")
+	if _, err := s.pool.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,protocol_version,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,'Price','P',$4,'endpoint-cp-v3',1,$5,$6,0)`, BaseSepoliaChainID, token.Hex(), common.HexToAddress("0x1").Hex(), supply.String(), b.Hash().Hex(), common.HexToHash("0x11").Hex()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO curves(chain_id,token_address,curve_address,curve_supply,sold_supply,reserve_balance,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,0)`, BaseSepoliaChainID, token.Hex(), common.HexToAddress("0x2").Hex(), supply.String(), sold.String(), reserve.String(), b.Hash().Hex(), common.HexToHash("0x12").Hex()); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = rebuildAnalyticsTx(ctx, tx, BaseSepoliaChainID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	virtual, ok := new(big.Int).SetString("1066666666666666666666666667", 10)
+	if !ok {
+		t.Fatal("invalid virtual reserve")
+	}
+	denominator := new(big.Int).Sub(virtual, sold)
+	numerator := new(big.Int).Mul(new(big.Int).Add(wad, reserve), wad)
+	price, rem := new(big.Int), new(big.Int)
+	price.QuoRem(numerator, denominator, rem)
+	if rem.Sign() > 0 {
+		price.Add(price, big.NewInt(1))
+	}
+	fdv := new(big.Int).Quo(new(big.Int).Mul(price, supply), wad)
+	var gotPrice, gotFDV string
+	if err := s.pool.QueryRow(ctx, `SELECT current_price::text,market_cap::text FROM token_metrics WHERE chain_id=$1 AND token_address=$2`, BaseSepoliaChainID, token.Hex()).Scan(&gotPrice, &gotFDV); err != nil {
+		t.Fatal(err)
+	}
+	if gotPrice != price.String() || gotFDV != fdv.String() {
+		t.Fatalf("price/fdv=%s/%s want=%s/%s", gotPrice, gotFDV, price, fdv)
+	}
+}

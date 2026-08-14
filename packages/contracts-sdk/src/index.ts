@@ -14,8 +14,8 @@ export const baseSepolia = {
 
 export type ContractAddresses = {
   zonkFactory?: `0x${string}`;
-  /** @deprecated test-only compatibility; production resolves curves via factory.curveOf. */
-  zonkCurve?: `0x${string}`;
+	/** Test-only override; runtime curve resolution always uses factory.curveOf. */
+	zonkCurve?: `0x${string}`;
   feeManager?: `0x${string}`;
   graduationManager?: `0x${string}`;
   permanentLPFeeVault?: `0x${string}`;
@@ -29,7 +29,7 @@ const address = (value: string | undefined): `0x${string}` | undefined => {
 };
 
 export const contractAddresses: ContractAddresses = {
-  zonkFactory: address(process.env.NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS ?? process.env.NEXT_PUBLIC_ZONK_FACTORY_ADDRESS),
+  zonkFactory: address(process.env.NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS),
   feeManager: address(process.env.NEXT_PUBLIC_FEE_MANAGER_V3_ADDRESS),
   graduationManager: address(process.env.NEXT_PUBLIC_GRADUATION_MANAGER_V3_ADDRESS),
   permanentLPFeeVault: address(process.env.NEXT_PUBLIC_PERMANENT_LP_FEE_VAULT_V3_ADDRESS),
@@ -84,10 +84,7 @@ export const graduationSettlementExecutorV3Abi = [
 ] as const;
 
 export type TokenLaunched = { token: Address; curve: Address; creator: Address; protocolVersion: string; totalSupply: bigint; curveAllocation: bigint; lpAllocation: bigint; canonicalPool: Address };
-export function encodeCreateToken(name: string, symbol: string, userSalt: Hex): Hex;
-export function encodeCreateToken(name: string, symbol: string, _legacyPrice: bigint, _legacySlope: bigint, _legacyThreshold: bigint): Hex;
-export function encodeCreateToken(name: string, symbol: string, userSaltOrLegacy: Hex | bigint, _legacySlope?: bigint, _legacyThreshold?: bigint): Hex {
-  const userSalt = typeof userSaltOrLegacy === "string" ? userSaltOrLegacy : (`0x${userSaltOrLegacy.toString(16).padStart(64, "0")}` as Hex);
+export function encodeCreateToken(name: string, symbol: string, userSalt: Hex): Hex {
   return encodeFunctionData({ abi: zonkFactoryAbi, functionName: "createToken", args: [name, symbol, userSalt] });
 }
 export function parseTokenLaunchedReceipt(receipt: { status: string; logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[] }, factory: Address): TokenLaunched {
@@ -153,20 +150,11 @@ function validateSlippage(slippageBps: number) {
   }
 }
 
-export function encodeBuy(minTokensOut: bigint, deadline: bigint): Hex;
-export function encodeBuy(_token: Address, tokenAmount: bigint, _maxReserveIn: bigint, deadline: bigint): Hex;
-export function encodeBuy(minTokensOutOrToken: bigint | Address, amountOrDeadline: bigint, _legacyMax?: bigint, legacyDeadline?: bigint): Hex {
-  const minTokensOut = typeof minTokensOutOrToken === "string" ? amountOrDeadline : minTokensOutOrToken;
-  const deadline = legacyDeadline ?? amountOrDeadline;
+export function encodeBuy(minTokensOut: bigint, deadline: bigint): Hex {
   return encodeFunctionData({ abi: zonkCurveAbi, functionName: "buy", args: [minTokensOut, deadline] });
 }
 
-export function encodeSell(tokensIn: bigint, minEthOut: bigint, deadline: bigint): Hex;
-export function encodeSell(_token: Address, tokensIn: bigint, minEthOut: bigint, deadline: bigint): Hex;
-export function encodeSell(tokenOrTokens: Address | bigint, amountOrMin: bigint, minOrDeadline: bigint, legacyDeadline?: bigint): Hex {
-  const tokensIn = typeof tokenOrTokens === "string" ? amountOrMin : tokenOrTokens;
-  const minEthOut = typeof tokenOrTokens === "string" ? minOrDeadline : amountOrMin;
-  const deadline = legacyDeadline ?? minOrDeadline;
+export function encodeSell(tokensIn: bigint, minEthOut: bigint, deadline: bigint): Hex {
   return encodeFunctionData({ abi: zonkCurveAbi, functionName: "sell", args: [tokensIn, minEthOut, deadline] });
 }
 

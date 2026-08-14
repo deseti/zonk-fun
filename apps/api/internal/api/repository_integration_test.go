@@ -7,6 +7,83 @@ import (
 	"testing"
 )
 
+func TestPostgresRepositoryRejectsUnpreparedSchema(t *testing.T) {
+	url := os.Getenv("UNPREPARED_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set UNPREPARED_TEST_DATABASE_URL to run schema gate test")
+	}
+	repo, err := NewPostgresRepository(context.Background(), url)
+	if err == nil {
+		repo.Close()
+		t.Fatal("API accepted an unprepared schema")
+	}
+	if !strings.Contains(err.Error(), "db/migrate.sh") {
+		t.Fatalf("unexpected schema error: %v", err)
+	}
+}
+
+func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) {
+	url := os.Getenv("API_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
+	}
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	const chain int64 = 84532
+	const block int64 = 499999980
+	const draftID = "live-finalize-regression"
+	const token = "0x0000000000000000000000000000000000000f01"
+	const creator = "0x0000000000000000000000000000000000000f02"
+	const txHash = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff01"
+	const blockHash = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff02"
+	cleanup := func() {
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM token_metadata_drafts WHERE draft_id=$1`, draftID)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM tokens WHERE chain_id=$1 AND transaction_hash=$2`, chain, txHash)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM chain_blocks WHERE chain_id=$1 AND block_hash=$2`, chain, blockHash)
+	}
+	cleanup()
+	defer cleanup()
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,$2,$3,'0xparent',0)`, chain, block, blockHash); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveMetadataDraft(ctx, MetadataDraft{ID: draftID, Name: "Zonk Live Test", Symbol: "ZLT", InitialSupply: "1000000000000000000000000000", Description: "live description", ImageURL: "/objects/live.png", MetadataURL: "/objects/live.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinalizeMetadata(ctx, chain, draftID, token, txHash); err != ErrNotFound {
+		t.Fatalf("finalize before indexing error=%v", err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,protocol_version,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,'Zonk Live Test','ZLT',1000000000000000000000000000,'endpoint-cp-v3',$4,$5,$6,7)`, chain, token, creator, block, blockHash, txHash); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinalizeMetadata(ctx, chain, draftID, token, txHash); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinalizeMetadata(ctx, chain, draftID, token, txHash); err != nil {
+		t.Fatalf("repeated identical finalize was not idempotent: %v", err)
+	}
+	page, err := repo.ListTokens(ctx, chain, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range page.Items {
+		if strings.EqualFold(item.Address, token) {
+			found = item.Description == "live description"
+		}
+	}
+	if !found {
+		t.Fatalf("finalized V3 token absent or malformed in token list: %+v", page.Items)
+	}
+	profile, err := repo.Creator(ctx, chain, creator, 100, "")
+	if err != nil || profile.TokenCount != 1 || len(profile.Tokens) != 1 || !strings.EqualFold(profile.Tokens[0].Address, token) {
+		t.Fatalf("creator projection=%+v err=%v", profile, err)
+	}
+}
+
 func TestPostgresRepositoryIndexedData(t *testing.T) {
 	url := os.Getenv("API_TEST_DATABASE_URL")
 	if url == "" {

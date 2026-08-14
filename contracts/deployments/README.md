@@ -7,52 +7,56 @@ Actual records should be saved locally as `base-sepolia.json`, which is ignored
 by Git. Never put a private key, mnemonic, RPC credential, or API key in this
 directory or in a committed environment file.
 
-`GOVERNANCE_ADDRESS` and `PROTOCOL_TREASURY` are separate required roles.
-`GOVERNANCE_ADDRESS` receives the initial administrative roles, while
-`PROTOCOL_TREASURY` is passed as the `FeeManager` treasury and is the only
-address authorized to claim protocol fees. The deployment script rejects a
-missing, malformed, or zero `PROTOCOL_TREASURY`. Do not substitute the
-deployer or governance address unless the intended real-world roles are
+`V3_GOVERNANCE_ADDRESS` and `V3_TREASURY_SAFE` are separate required roles.
+The deployment signer must be the configured governance address when
+`V3_BROADCAST=true`; the treasury is the protocol-fee recipient. Do not
+substitute either role unless the intended real-world responsibilities are
 deliberately the same.
 
-Phase 3 core deployment does not require `DEX_ADAPTER_ADDRESS`. The deployed
-`LiquidityManager` starts without an adapter, and graduation fails closed until
-the governance address configures a real reviewed adapter. `DEX_ADAPTER_ADDRESS`
-and `LIQUIDITY_MANAGER_ADDRESS` are Phase 10 configuration inputs only.
+## endpoint-cp-v3 Base Sepolia deployment
 
-Deploy the contracts in dependency order:
+The repository supports only the endpoint-cp-v3 protocol. Deployment is
+performed by `DeployV3BaseSepolia`; it is a dry run unless `V3_BROADCAST=true`
+is explicitly provided in the protected process environment.
 
 ```bash
 cd contracts
-Set the required variables in the protected process environment using real
-Base Sepolia configuration, including `PROTOCOL_TREASURY`; do not place
-credentials or wallet values in this documentation. Then run:
-
-forge script script/DeployBaseSepolia.s.sol:DeployBaseSepolia \
+forge script script/DeployV3BaseSepolia.s.sol:DeployV3BaseSepolia \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 ```
 
-The governance executor must run deployment so it can authorize the curve in
-both `FeeManager` and `LiquidityManager`. The LP beneficiary must be a reviewed
-Safe, timelock, or governance executor. Record
-the logged factory, fee manager, liquidity manager, LP locker, and curve
-addresses, then set the address and parameter variables from `.env.example`.
-Run `CreateTokenBaseSepolia`, `SeedCurveBaseSepolia`, and `BuyBaseSepolia` before
-testing sell. Graduation is Phase 10 only: after adapter approval and a real
-adapter deployment, configure it with:
+The script requires the Base Sepolia chain and validates the canonical Uniswap
+V3 factory, WETH, and Nonfungible Position Manager before deployment. Supply
+the required governance, treasury, and canonical-dependency variables through
+the protected process environment. Never place private keys, RPC URLs, or real
+deployment credentials in this document or an example manifest.
 
-```bash
-forge script script/ConfigureDexAdapterBaseSepolia.s.sol:ConfigureDexAdapterBaseSepolia \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
-```
+Deployment order is fixed and atomic where bindings are made:
 
-Only then can an authorized creator or governance executor run
-`GraduateBaseSepolia` with a bounded `GRADUATION_DEADLINE`.
-For every broadcast, inspect the receipt and confirm `TokenCreated`,
-`CurveCreated`, `TokensBought`, and `TokensSold` event data against the quote
-and the onchain `curve` state. A graduation validation must additionally check
-`GraduationPending`, `LiquidityCreated`, `LiquidityLocked`, and `Graduated`, the
-stored graduation record, and the LP lock. Use `cast receipt <tx-hash>
---rpc-url ...` for receipt verification.
+1. `FeeManagerV3`
+2. `GraduationManagerV3`
+3. `ZonkFactoryV3`, including its immutable token and curve deployers
+4. `PermanentLPFeeVaultV3`
+5. `PermanentLPCustodianDeployerV3`, including its settlement executor
+6. `GraduationManagerV3.bindDependenciesOnce`, which binds the vault,
+   custodian deployer, and canonical position manager
+
+The script verifies every deployed relationship before reporting addresses.
+Record those addresses in a deployment manifest based on
+`base-sepolia.example.json`; the example uses only zero-address placeholders.
+
+## Launch and receipt verification
+
+Each `ZonkFactoryV3.createToken(name, symbol, userSalt)` call atomically
+deploys and registers the token and curve. There is no seed, enable-trading,
+adapter-configuration, or manual graduation transaction in the V3 deployment
+flow.
+
+For a launch receipt, verify `TokenLaunchedV3` and its
+`protocolVersion == "endpoint-cp-v3"`. For trades, verify `TokensBought` or
+`TokensSold` against the corresponding on-chain quote. On terminal settlement,
+verify `Graduated` from the curve and `GraduatedV3` from the graduation manager.
+Use `cast receipt <tx-hash> --rpc-url "$BASE_SEPOLIA_RPC_URL"` for receipt
+inspection.
 
 No deployment is performed automatically by the repository test suite.

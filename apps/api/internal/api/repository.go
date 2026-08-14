@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,22 +37,34 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 		return nil, e
 	}
 	r := &PostgresRepository{pool: p}
-	if e = r.ensureMetadataSchema(ctx); e != nil {
+	if e = r.requireSchema(ctx); e != nil {
 		p.Close()
 		return nil, e
 	}
 	return r, nil
 }
-func (r *PostgresRepository) ensureMetadataSchema(ctx context.Context) error {
-	_, e := r.pool.Exec(ctx, `ALTER TABLE tokens ADD COLUMN IF NOT EXISTS description TEXT; ALTER TABLE tokens ADD COLUMN IF NOT EXISTS image_url TEXT; ALTER TABLE tokens ADD COLUMN IF NOT EXISTS metadata_url TEXT; CREATE TABLE IF NOT EXISTS token_metadata_drafts(draft_id TEXT PRIMARY KEY,name TEXT NOT NULL,symbol TEXT NOT NULL,initial_supply NUMERIC(78,0) NOT NULL,description TEXT NOT NULL,image_url TEXT NOT NULL,metadata_url TEXT NOT NULL,token_address TEXT,transaction_hash TEXT,finalized_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-	return e
+func (r *PostgresRepository) requireSchema(ctx context.Context) error {
+	var ready bool
+	e := r.pool.QueryRow(ctx, `SELECT
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5]
+		AND to_regclass('public.tokens') IS NOT NULL
+		AND to_regclass('public.token_metadata_drafts') IS NOT NULL
+		AND to_regclass('public.token_holder_balances') IS NOT NULL
+		AND to_regclass('public.token_trade_buckets') IS NOT NULL`).Scan(&ready)
+	if e != nil {
+		return fmt.Errorf("database schema is not ready; run db/migrate.sh: %w", e)
+	}
+	if !ready {
+		return errors.New("database schema is not ready; run db/migrate.sh")
+	}
+	return nil
 }
 func (r *PostgresRepository) Close()                         { r.pool.Close() }
 func (r *PostgresRepository) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
 const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),t.block_number,t.transaction_hash,t.log_index,
  c.curve_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
- m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,
+ m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,m.unique_trader_count,m.latest_trade_timestamp,m.current_price,m.market_cap,m.holder_count,
  g.phase,g.liquidity_token_address,g.token_amount,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
  FROM (SELECT DISTINCT ON (token_address) * FROM tokens WHERE chain_id=$1 AND is_canonical ORDER BY token_address,block_number DESC,log_index DESC) t
  LEFT JOIN LATERAL (SELECT * FROM curves c WHERE c.chain_id=$1 AND c.token_address=t.token_address AND c.is_canonical ORDER BY c.block_number DESC,c.log_index DESC LIMIT 1)c ON true
@@ -61,17 +75,17 @@ func scanToken(row pgx.Row) (Token, error) {
 	var t Token
 	var caddr, csupply, sold, reserve, start, slope, threshold, life *string
 	var phase, liq, ta, qa, la, lid *string
-	var tc, bc, sc *int64
-	var vol, fees *string
+	var tc, bc, sc, uniqueTraders, latestTrade, holders *int64
+	var vol, fees, price, marketCap *string
 	var unlock *int64
-	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
+	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &marketCap, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
 	if e != nil {
 		return t, e
 	}
 	if caddr != nil {
 		t.Curve = &Curve{Address: *caddr, SoldSupply: value(sold), ReserveBalance: value(reserve), Supply: value(csupply), StartingPrice: value(start), Slope: value(slope), GraduationThreshold: value(threshold), Lifecycle: value(life)}
 	}
-	t.Metrics = Metrics{TradeCount: valueInt(tc), BuyCount: valueInt(bc), SellCount: valueInt(sc), Volume: value(vol), Fees: value(fees)}
+	t.Metrics = Metrics{TradeCount: valueInt(tc), BuyCount: valueInt(bc), SellCount: valueInt(sc), Volume: value(vol), Fees: value(fees), UniqueTraderCount: valueInt(uniqueTraders), LatestTradeTimestamp: latestTrade, CurrentPrice: price, MarketCap: marketCap, HolderCount: holders}
 	if phase != nil {
 		t.Graduation = &Graduation{Phase: *phase, LiquidityToken: value(liq), TokenAmount: value(ta), QuoteAmount: value(qa), LiquidityAmount: value(la), LockID: value(lid), UnlockTimestamp: unlock}
 	}
@@ -87,13 +101,28 @@ func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, 
 		return e
 	}
 	defer tx.Rollback(ctx)
-	var name, symbol, supply, description, imageURL, metadataURL string
-	e = tx.QueryRow(ctx, `SELECT d.name,d.symbol,d.initial_supply::text,d.description,d.image_url,d.metadata_url FROM token_metadata_drafts d JOIN tokens t ON t.chain_id=$1 AND lower(t.token_address)=lower($2) AND lower(t.transaction_hash)=lower($3) AND t.is_canonical AND t.name=d.name AND t.symbol=d.symbol AND t.initial_supply=d.initial_supply WHERE d.draft_id=$4 AND d.finalized_at IS NULL`, chain, token, txHash, draftID).Scan(&name, &symbol, &supply, &description, &imageURL, &metadataURL)
+	var name, symbol, supply, description, imageURL, metadataURL, finalizedToken, finalizedTx string
+	var finalized bool
+	e = tx.QueryRow(ctx, `SELECT name,symbol,initial_supply::text,description,image_url,metadata_url,coalesce(token_address,''),coalesce(transaction_hash,''),finalized_at IS NOT NULL FROM token_metadata_drafts WHERE draft_id=$1 FOR UPDATE`, draftID).Scan(&name, &symbol, &supply, &description, &imageURL, &metadataURL, &finalizedToken, &finalizedTx, &finalized)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if e != nil {
 		return e
+	}
+	if finalized {
+		if strings.EqualFold(finalizedToken, token) && strings.EqualFold(finalizedTx, txHash) {
+			return nil
+		}
+		return ErrNotFound
+	}
+	var indexed bool
+	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tokens t WHERE t.chain_id=$1 AND lower(t.token_address)=lower($2) AND lower(t.transaction_hash)=lower($3) AND t.is_canonical AND t.name=$4 AND t.symbol=$5 AND t.initial_supply=$6)`, chain, token, txHash, name, symbol, supply).Scan(&indexed)
+	if e != nil {
+		return e
+	}
+	if !indexed {
+		return ErrNotFound
 	}
 	result, e := tx.Exec(ctx, `UPDATE tokens SET description=$4,image_url=$5,metadata_url=$6 WHERE chain_id=$1 AND lower(token_address)=lower($2) AND lower(transaction_hash)=lower($3) AND is_canonical`, chain, token, txHash, description, imageURL, metadataURL)
 	if e != nil {

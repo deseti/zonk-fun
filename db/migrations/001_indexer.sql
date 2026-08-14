@@ -89,17 +89,19 @@ CREATE TABLE IF NOT EXISTS token_metrics (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chain_id, token_address)
 );
 
-ALTER TABLE chain_events ADD CONSTRAINT chain_events_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE tokens ADD CONSTRAINT tokens_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE curves ADD CONSTRAINT curves_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE trades ADD CONSTRAINT trades_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE fees ADD CONSTRAINT fees_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE graduations ADD CONSTRAINT graduations_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
-ALTER TABLE liquidity_events ADD CONSTRAINT liquidity_events_block_fk
-    FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash);
+DO $$
+DECLARE
+    relation_name TEXT;
+    constraint_name TEXT;
+BEGIN
+    FOREACH relation_name IN ARRAY ARRAY['chain_events','tokens','curves','trades','fees','graduations','liquidity_events'] LOOP
+        constraint_name := relation_name || '_block_fk';
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = constraint_name) THEN
+            EXECUTE format(
+                'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (chain_id, block_hash) REFERENCES chain_blocks(chain_id, block_hash)',
+                relation_name,
+                constraint_name
+            );
+        END IF;
+    END LOOP;
+END $$;

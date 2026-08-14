@@ -65,6 +65,11 @@ func (r *RetryingRPC) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([
 	err := r.call(ctx, func() error { var e error; out, e = r.inner.FilterLogs(ctx, q); return e })
 	return out, err
 }
+func (r *RetryingRPC) CallContract(ctx context.Context, msg ethereum.CallMsg, block *big.Int) ([]byte, error) {
+	var out []byte
+	err := r.call(ctx, func() error { var e error; out, e = r.inner.CallContract(ctx, msg, block); return e })
+	return out, err
+}
 func (r *RetryingRPC) call(ctx context.Context, fn func() error) error {
 	var last error
 	for attempt := 1; attempt <= r.cfg.MaxAttempts; attempt++ {

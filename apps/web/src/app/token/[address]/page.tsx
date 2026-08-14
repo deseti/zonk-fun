@@ -26,17 +26,15 @@ export default function TokenDetailPage() {
   const token = query.data;
   return <main className="container flex-1 py-12">
     <p className="eyebrow">Token detail</p>
-    {token.is_legacy && <div className="panel mt-4 text-amber-200">Legacy test asset — not compatible with the atomic Option A custody model.</div>}
     <div className="mt-3 flex flex-wrap items-start justify-between gap-6">
       {token.image_url && <div role="img" aria-label={`${token.name} token image`} className="h-32 w-32 rounded-2xl bg-cover bg-center" style={{ backgroundImage: `url(${apiAssetURL(token.image_url)})` }} />}
       <div className="flex-1"><h1 className="text-3xl font-semibold text-white">{token.name}</h1><p className="mt-2 text-cyan-300">{token.symbol}</p>{token.description ? <p className="mt-4 max-w-2xl text-zinc-300">{token.description}</p> : <p className="mt-4 text-sm text-zinc-500">No off-chain description has been finalized.</p>}</div>
       <code className="text-xs text-zinc-500">{token.address}</code>
     </div>
     <div className="mt-8 grid gap-4 sm:grid-cols-3"><Metric label="Indexed volume" value={token.metrics.volume} /><Metric label="Trades" value={String(token.metrics.trade_count)} /><Metric label="Onchain read" value={onchain ?? "Checking…"} /></div>
-    <TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} isLegacy={token.is_legacy} />
+    <TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} />
     <section className="mt-10 panel"><h2 className="text-lg font-semibold text-white">Canonical indexed state</h2><dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
       <Detail label="Creator" value={token.creator} />
-      <Detail label="Protocol version" value={token.protocol_version} />
       <Detail label="Created at block" value={String(token.created_at.block_number)} />
       <Detail label="Initial supply" value={token.initial_supply} />
       <Detail label="Market cap" value={token.metrics.market_cap ?? "Not indexed"} />

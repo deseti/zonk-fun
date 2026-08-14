@@ -39,13 +39,16 @@ type Curve struct {
 	Lifecycle           string `json:"lifecycle,omitempty"`
 }
 type Metrics struct {
-	TradeCount  int64   `json:"trade_count"`
-	BuyCount    int64   `json:"buy_count"`
-	SellCount   int64   `json:"sell_count"`
-	Volume      string  `json:"volume"`
-	Fees        string  `json:"fees"`
-	MarketCap   *string `json:"market_cap"`
-	HolderCount *int64  `json:"holder_count"`
+	TradeCount           int64   `json:"trade_count"`
+	BuyCount             int64   `json:"buy_count"`
+	SellCount            int64   `json:"sell_count"`
+	Volume               string  `json:"volume"`
+	Fees                 string  `json:"fees"`
+	UniqueTraderCount    int64   `json:"unique_trader_count"`
+	LatestTradeTimestamp *int64  `json:"latest_trade_timestamp"`
+	CurrentPrice         *string `json:"current_price"`
+	MarketCap            *string `json:"market_cap"`
+	HolderCount          *int64  `json:"holder_count"`
 }
 type Graduation struct {
 	Phase           string `json:"phase"`

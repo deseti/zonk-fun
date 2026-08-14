@@ -32,12 +32,8 @@ describe("missing Privy configuration boundary", () => {
   });
 
   it("renders trading without invoking hooks that require PrivyProvider", () => {
-    render(<TokenTrading tokenAddress={token} creator={creator} symbol="ZONK" isLegacy={false} />);
+    render(<TokenTrading tokenAddress={token} creator={creator} symbol="ZONK" />);
     expect(screen.getByText(/Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading/)).toBeTruthy();
   });
 
-  it("preserves the legacy-token warning without requiring Privy", () => {
-    render(<TokenTrading tokenAddress={token} creator={creator} symbol="ZONK" isLegacy />);
-    expect(screen.getByText(/Trading is disabled for this legacy test asset/)).toBeTruthy();
-  });
 });

@@ -14,6 +14,11 @@ const BaseSepoliaChainID int64 = 84532
 type RPC interface {
 	HeaderByNumber(context.Context, *big.Int) (*types.Header, error)
 	FilterLogs(context.Context, ethereum.FilterQuery) ([]types.Log, error)
+	CallContract(context.Context, ethereum.CallMsg, *big.Int) ([]byte, error)
+}
+type TokenMetadata struct {
+	Name, Symbol string
+	Decimals     uint8
 }
 type Config struct {
 	RPCURL, DatabaseURL, Mode, IndexerName          string

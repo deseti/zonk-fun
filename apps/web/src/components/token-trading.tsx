@@ -11,8 +11,7 @@ import type { TradeRecovery } from "@/lib/transactions";
 import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 
-export function TokenTrading({ tokenAddress, symbol, isLegacy }: { tokenAddress: Address; symbol: string; creator: Address; isLegacy: boolean }) {
-  if (isLegacy) return <div className="mt-10 panel text-amber-200">Trading is disabled for this legacy test asset. Only fresh atomic Option A launches are production-compatible.</div>;
+export function TokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string; creator: Address }) {
   if (!hasPrivyAppId) return <div className="mt-10 panel text-amber-200">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
   return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} />;
 }
@@ -93,7 +92,7 @@ function PrivyTokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; sy
 
   if (availabilityQuery.isError) return <div className="mt-10 panel text-red-300">The deployed curve could not be read from Base Sepolia.</div>;
   if (availabilityQuery.isPending) return <div className="mt-10 panel text-zinc-400">Checking the token’s Base Sepolia curve…</div>;
-  if (availabilityQuery.data === null) return <div className="mt-10 panel text-amber-200">This token is a legacy test asset without an atomic Option A curve and is not production-compatible.</div>;
+	if (availabilityQuery.data === null) return <div className="mt-10 panel text-amber-200">The canonical endpoint curve is not available for this token.</div>;
   return <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
     <TokenTradePanel
       key={`${walletAddress?.toLowerCase() ?? "no-wallet"}:${tokenAddress.toLowerCase()}`}

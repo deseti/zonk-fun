@@ -61,7 +61,11 @@ func main() {
 		addresses := []common.Address{}
 		contractEnv := os.Getenv("ZONK_INDEXER_CONTRACTS")
 		if contractEnv == "" {
-			contractEnv = strings.Join([]string{os.Getenv("ZONK_FACTORY_ADDRESS"), os.Getenv("ZONK_CURVE_ADDRESS"), os.Getenv("FEE_MANAGER_ADDRESS"), os.Getenv("LIQUIDITY_MANAGER_ADDRESS"), os.Getenv("LP_LOCKER_ADDRESS")}, ",")
+			factoryAddress := os.Getenv("ZONK_FACTORY_V3_ADDRESS")
+			if factoryAddress == "" {
+				factoryAddress = os.Getenv("ZONK_FACTORY_ADDRESS")
+			}
+			contractEnv = strings.Join([]string{factoryAddress, os.Getenv("FEE_MANAGER_V3_ADDRESS"), os.Getenv("GRADUATION_MANAGER_V3_ADDRESS"), os.Getenv("PERMANENT_LP_FEE_VAULT_V3_ADDRESS"), os.Getenv("PERMANENT_LP_CUSTODIAN_DEPLOYER_V3_ADDRESS"), os.Getenv("GRADUATION_SETTLEMENT_EXECUTOR_V3_ADDRESS")}, ",")
 		}
 		for _, v := range strings.Split(contractEnv, ",") {
 			if common.IsHexAddress(strings.TrimSpace(v)) {
