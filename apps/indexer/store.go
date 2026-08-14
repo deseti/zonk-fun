@@ -60,7 +60,7 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 	}
 	var ready bool
 	e = p.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7]
 		AND to_regclass('public.chain_events') IS NOT NULL
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.curves') IS NOT NULL`).Scan(&ready)
@@ -225,7 +225,7 @@ func rebuildCurveStateTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 	return e
 }
 
-// rebuildAnalyticsTx derives every Phase 9 projection from canonical events in
+// rebuildAnalyticsTx derives every market discovery projection from canonical events in
 // the same transaction as block application or rewind. The existing indexer
 // already rebuilds chain-wide trade metrics on each applied event block; keeping
 // the dependent holder and bucket projections together prevents a reorg from
@@ -286,6 +286,28 @@ func rebuildAnalyticsTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 	WHERE m.chain_id=$1 AND lower(m.token_address)=tk.token_address`, chain); e != nil {
 		return e
 	}
+	// The ranking window is anchored to indexed canonical time, making replay,
+	// pagination, and reorg recovery independent of API host wall-clock time.
+	if _, e := tx.Exec(ctx, `WITH anchor AS (
+		SELECT max(block_timestamp) timestamp FROM chain_blocks WHERE chain_id=$1 AND is_canonical
+	), recent AS (
+		SELECT lower(t.token_address) token_address,count(*) trade_count,coalesce(sum(t.curve_value),0) volume,
+			count(DISTINCT lower(t.trader_address)) trader_count
+		FROM trades t JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
+		CROSS JOIN anchor a
+		WHERE t.chain_id=$1 AND t.is_canonical AND a.timestamp IS NOT NULL AND b.block_timestamp > a.timestamp-86400
+		GROUP BY lower(t.token_address)
+	)
+	UPDATE token_metrics m SET recent_trade_count=coalesce(r.trade_count,0),recent_volume=coalesce(r.volume,0),
+		recent_trader_count=coalesce(r.trader_count,0),recent_window_start=(SELECT timestamp-86400 FROM anchor)
+	FROM (SELECT lower(token_address) token_address FROM tokens WHERE chain_id=$1 AND is_canonical) tk
+	LEFT JOIN recent r ON r.token_address=tk.token_address
+	WHERE m.chain_id=$1 AND lower(m.token_address)=tk.token_address`, chain); e != nil {
+		return e
+	}
+	if _, e := tx.Exec(ctx, `UPDATE token_metrics SET current_price=NULL,fully_diluted_value=NULL WHERE chain_id=$1`, chain); e != nil {
+		return e
+	}
 	if _, e := tx.Exec(ctx, `WITH state AS (
 		SELECT DISTINCT ON (lower(t.token_address)) lower(t.token_address) token_address,t.initial_supply,c.sold_supply,c.reserve_balance
 		FROM tokens t JOIN LATERAL (SELECT * FROM curves c WHERE c.chain_id=t.chain_id AND lower(c.token_address)=lower(t.token_address) AND c.is_canonical ORDER BY c.block_number DESC,c.log_index DESC LIMIT 1) c ON true
@@ -295,33 +317,42 @@ func rebuildAnalyticsTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 		SELECT token_address, ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) price, initial_supply
 		FROM state WHERE sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
 	)
-	UPDATE token_metrics m SET current_price=p.price,market_cap=floor(p.price*p.initial_supply/1000000000000000000::numeric)
+	UPDATE token_metrics m SET current_price=p.price,fully_diluted_value=floor(p.price*p.initial_supply/1000000000000000000::numeric)
 	FROM prices p WHERE m.chain_id=$1 AND lower(m.token_address)=p.token_address`, chain); e != nil {
-		return e
-	}
-	if _, e := tx.Exec(ctx, `UPDATE token_metrics SET current_price=NULL,market_cap=NULL WHERE chain_id=$1 AND lower(token_address) NOT IN (
-		SELECT lower(token_address) FROM tokens WHERE chain_id=$1 AND is_canonical AND protocol_version='endpoint-cp-v3')`, chain); e != nil {
 		return e
 	}
 	if _, e := tx.Exec(ctx, `DELETE FROM token_trade_buckets WHERE chain_id=$1`, chain); e != nil {
 		return e
 	}
-	// Historical close_price is intentionally left NULL. A bucket close needs the
-	// curve state after its final trade, not the token's present state; Phase 9A
-	// defers it until that historical state is projected safely.
-	_, e := tx.Exec(ctx, `WITH bucketed AS (
-		SELECT lower(t.token_address) token_address,(b.block_timestamp / 3600) * 3600 bucket_start,t.side,t.curve_value,t.trader_address,t.block_number,t.block_hash,t.transaction_hash,t.log_index
+	// A bucket close is derived from the curve state after its final canonical
+	// trade. EVM log_index provides the canonical event order within a block.
+	_, e := tx.Exec(ctx, `WITH ordered AS (
+		SELECT lower(t.token_address) token_address,(b.block_timestamp / 3600) * 3600 bucket_start,t.side,t.token_amount,t.curve_value,t.trader_address,t.block_number,t.block_hash,t.transaction_hash,t.log_index,
+			sum(CASE WHEN t.side='buy' THEN t.token_amount ELSE -t.token_amount END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.log_index,t.transaction_hash) sold_supply,
+			sum(CASE WHEN t.side='buy' THEN t.curve_value ELSE -t.curve_value END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.log_index,t.transaction_hash) reserve_balance
 		FROM trades t JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
 		WHERE t.chain_id=$1 AND t.is_canonical
 	), totals AS (
 		SELECT token_address,bucket_start,count(*) trade_count,count(*) FILTER (WHERE side='buy') buy_count,count(*) FILTER (WHERE side='sell') sell_count,
-			coalesce(sum(curve_value),0) volume,count(DISTINCT lower(trader_address)) unique_trader_count FROM bucketed GROUP BY token_address,bucket_start
+			coalesce(sum(curve_value),0) volume,count(DISTINCT lower(trader_address)) unique_trader_count FROM ordered GROUP BY token_address,bucket_start
 	), latest AS (
-		SELECT DISTINCT ON (token_address,bucket_start) * FROM bucketed ORDER BY token_address,bucket_start,block_number DESC,transaction_hash DESC,log_index DESC
+		SELECT DISTINCT ON (token_address,bucket_start) * FROM ordered ORDER BY token_address,bucket_start,block_number DESC,log_index DESC,transaction_hash DESC
+	), prices AS (
+		SELECT token_address,bucket_start,block_number,log_index,transaction_hash,
+			ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) price
+		FROM ordered WHERE sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
+	), candles AS (
+		SELECT t.token_address,t.bucket_start,
+			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number,t.log_index,t.transaction_hash))[1] END open_price,
+			CASE WHEN count(p.price)=count(*) THEN max(p.price) END high_price,
+			CASE WHEN count(p.price)=count(*) THEN min(p.price) END low_price,
+			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number DESC,t.log_index DESC,t.transaction_hash DESC))[1] END close_price
+		FROM ordered t LEFT JOIN prices p USING(token_address,bucket_start,block_number,log_index,transaction_hash)
+		GROUP BY t.token_address,t.bucket_start
 	)
-	INSERT INTO token_trade_buckets(chain_id,token_address,bucket_start,trade_count,buy_count,sell_count,volume,unique_trader_count,block_number,block_hash,transaction_hash,log_index)
-	SELECT $1,t.token_address,t.bucket_start,t.trade_count,t.buy_count,t.sell_count,t.volume,t.unique_trader_count,l.block_number,l.block_hash,l.transaction_hash,l.log_index
-	FROM totals t JOIN latest l USING(token_address,bucket_start)`, chain)
+	INSERT INTO token_trade_buckets(chain_id,token_address,bucket_start,trade_count,buy_count,sell_count,volume,unique_trader_count,open_price,high_price,low_price,close_price,block_number,block_hash,transaction_hash,log_index)
+	SELECT $1,t.token_address,t.bucket_start,t.trade_count,t.buy_count,t.sell_count,t.volume,t.unique_trader_count,c.open_price,c.high_price,c.low_price,c.close_price,l.block_number,l.block_hash,l.transaction_hash,l.log_index
+	FROM totals t JOIN latest l USING(token_address,bucket_start) LEFT JOIN candles c USING(token_address,bucket_start)`, chain)
 	return e
 }
 func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metadata map[string]TokenMetadata) error {

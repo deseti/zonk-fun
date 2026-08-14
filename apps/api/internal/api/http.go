@@ -56,6 +56,7 @@ func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Dura
 		r.Get("/trending", h.trending)
 		r.Get("/tokens/{address}", h.token)
 		r.Get("/tokens/{address}/pricing", h.pricing)
+		r.Get("/tokens/{address}/chart", h.chart)
 		r.Get("/tokens/{address}/trades", h.trades)
 		r.Get("/tokens/{address}/activity", h.activity)
 		r.Get("/creators/{address}", h.creator)
@@ -282,7 +283,17 @@ func (h *Handler) tokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_request", e.Error())
 		return
 	}
-	out, e := h.repo.ListTokens(r.Context(), h.chainID, limit, cursor)
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("search")))
+	if len([]byte(search)) > 64 || (search != "" && !regexp.MustCompile(`^[a-z0-9 _.-]+$`).MatchString(search)) {
+		writeError(w, 400, "invalid_request", "search must be at most 64 characters and use letters, numbers, spaces, dots, underscores, or hyphens")
+		return
+	}
+	var out Page
+	if search == "" {
+		out, e = h.repo.ListTokens(r.Context(), h.chainID, limit, cursor)
+	} else {
+		out, e = h.repo.SearchTokens(r.Context(), h.chainID, search, limit, cursor)
+	}
 	if e != nil {
 		h.repositoryError(w, r, e)
 		return
@@ -334,17 +345,28 @@ func (h *Handler) pricing(w http.ResponseWriter, r *http.Request) {
 		h.repositoryError(w, r, e)
 		return
 	}
-	pricing := map[string]any{"token_address": t.Address, "market_cap": t.Metrics.MarketCap, "source": "indexed_curve"}
-	if t.Curve != nil {
-		pricing["starting_price"] = t.Curve.StartingPrice
-		pricing["slope"] = t.Curve.Slope
-		pricing["reserve_balance"] = t.Curve.ReserveBalance
-		pricing["sold_supply"] = t.Curve.SoldSupply
-	} else {
-		pricing["starting_price"] = nil
-		pricing["slope"] = nil
+	writeJSON(w, 200, Pricing{TokenAddress: t.Address, CurrentPrice: t.Metrics.CurrentPrice, FullyDilutedValue: t.Metrics.FullyDilutedValue, Source: "indexed_v3_curve"})
+}
+func (h *Handler) chart(w http.ResponseWriter, r *http.Request) {
+	a, e := addressParam(r, "address")
+	if e != nil {
+		writeError(w, 400, "invalid_address", e.Error())
+		return
 	}
-	writeJSON(w, 200, pricing)
+	limit := 168
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, e = strconv.Atoi(raw)
+		if e != nil || limit < 1 || limit > 1000 {
+			writeError(w, 400, "invalid_request", "limit must be between 1 and 1000")
+			return
+		}
+	}
+	out, e := h.repo.Chart(r.Context(), h.chainID, a, limit)
+	if e != nil {
+		h.repositoryError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, out)
 }
 func (h *Handler) creatorTokens(w http.ResponseWriter, r *http.Request) {
 	a, e := addressParam(r, "address")
@@ -443,7 +465,7 @@ func validOpaqueCursor(raw string) bool {
 		return false
 	}
 	switch c.Kind {
-	case "tokens", "creator":
+	case "tokens", "creator", "search":
 		_, e := decodeCursor(raw, c.Kind)
 		return e == nil
 	case "trending":

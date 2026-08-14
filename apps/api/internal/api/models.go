@@ -47,7 +47,7 @@ type Metrics struct {
 	UniqueTraderCount    int64   `json:"unique_trader_count"`
 	LatestTradeTimestamp *int64  `json:"latest_trade_timestamp"`
 	CurrentPrice         *string `json:"current_price"`
-	MarketCap            *string `json:"market_cap"`
+	FullyDilutedValue    *string `json:"fully_diluted_value"`
 	HolderCount          *int64  `json:"holder_count"`
 }
 type Graduation struct {
@@ -70,6 +70,27 @@ type TradePage struct {
 type ActivityPage struct {
 	Items      []Activity `json:"items"`
 	NextCursor string     `json:"next_cursor,omitempty"`
+}
+type ChartPoint struct {
+	BucketStart       int64   `json:"bucket_start"`
+	TradeCount        int64   `json:"trade_count"`
+	BuyCount          int64   `json:"buy_count"`
+	SellCount         int64   `json:"sell_count"`
+	Volume            string  `json:"volume"`
+	UniqueTraderCount int64   `json:"unique_trader_count"`
+	OpenPrice         *string `json:"open_price"`
+	HighPrice         *string `json:"high_price"`
+	LowPrice          *string `json:"low_price"`
+	ClosePrice        *string `json:"close_price"`
+}
+type ChartPage struct {
+	Items []ChartPoint `json:"items"`
+}
+type Pricing struct {
+	TokenAddress      string  `json:"token_address"`
+	CurrentPrice      *string `json:"current_price"`
+	FullyDilutedValue *string `json:"fully_diluted_value"`
+	Source            string  `json:"source"`
 }
 type Trade struct {
 	TokenAddress    string `json:"token_address"`

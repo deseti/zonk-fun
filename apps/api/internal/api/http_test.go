@@ -26,6 +26,9 @@ func (f *fakeRepo) ListTokens(context.Context, int64, int, string) (Page, error)
 	f.calls++
 	return f.tokens, f.listErr
 }
+func (f *fakeRepo) SearchTokens(context.Context, int64, string, int, string) (Page, error) {
+	return f.tokens, f.listErr
+}
 func (f *fakeRepo) TrendingTokens(context.Context, int64, int, string) (Page, error) {
 	return Page{Items: []Token{}}, nil
 }
@@ -41,6 +44,9 @@ func (f *fakeRepo) Trades(context.Context, int64, string, int, string) (TradePag
 }
 func (f *fakeRepo) Activity(context.Context, int64, string, int, string) (ActivityPage, error) {
 	return ActivityPage{Items: []Activity{}}, nil
+}
+func (f *fakeRepo) Chart(context.Context, int64, string, int) (ChartPage, error) {
+	return ChartPage{Items: []ChartPoint{}}, nil
 }
 func (f *fakeRepo) SaveMetadataDraft(context.Context, MetadataDraft) error                { return nil }
 func (f *fakeRepo) FinalizeMetadata(context.Context, int64, string, string, string) error { return nil }
@@ -101,6 +107,26 @@ func TestTokenListEmptyAndDetailNotFound(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/0x0000000000000000000000000000000000000001", nil))
 	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"not_found"`) {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+func TestTokenSearchAndV3PricingResponse(t *testing.T) {
+	address := "0x0000000000000000000000000000000000000001"
+	price, fdv := "7", "7000"
+	r := testHandler(&fakeRepo{tokens: Page{Items: []Token{}}, token: Token{Address: address, Metrics: Metrics{CurrentPrice: &price, FullyDilutedValue: &fdv}}})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens?search=Zonk", nil))
+	if w.Code != 200 {
+		t.Fatalf("search status=%d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens?search=%3Cscript%3E", nil))
+	if w.Code != 400 {
+		t.Fatalf("unsafe search status=%d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address+"/pricing", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"fully_diluted_value":"7000"`) || strings.Contains(w.Body.String(), "market_cap") || strings.Contains(w.Body.String(), "reserve_balance") {
+		t.Fatalf("pricing=%s", w.Body.String())
 	}
 }
 

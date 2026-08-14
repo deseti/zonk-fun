@@ -32,6 +32,18 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+    volumes:
+      - ./db:/zonk-db:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["/bin/sh", "/zonk-db/migrate.sh"]
+
   api:
     build:
       context: .
@@ -53,6 +65,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:4000/health"]
       interval: 5s
@@ -78,16 +92,14 @@ services:
       INDEXER_RPC_INITIAL_DELAY_MS: ${INDEXER_RPC_INITIAL_DELAY_MS:-100}
       INDEXER_RPC_MAX_DELAY_MS: ${INDEXER_RPC_MAX_DELAY_MS:-2000}
       ZONK_INDEXER_CONTRACTS: ${ZONK_INDEXER_CONTRACTS:-}
-      ZONK_FACTORY_ADDRESS: ${ZONK_FACTORY_ADDRESS:-}
-      ZONK_CURVE_ADDRESS: ${ZONK_CURVE_ADDRESS:-}
-      FEE_MANAGER_ADDRESS: ${FEE_MANAGER_ADDRESS:-}
-      LIQUIDITY_MANAGER_ADDRESS: ${LIQUIDITY_MANAGER_ADDRESS:-}
-      LP_LOCKER_ADDRESS: ${LP_LOCKER_ADDRESS:-}
+      ZONK_FACTORY_V3_ADDRESS: ${ZONK_FACTORY_V3_ADDRESS:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   web:
     build:
@@ -97,7 +109,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
         NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL: ${NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}
         NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID:?NEXT_PUBLIC_PRIVY_APP_ID must be set}
-        NEXT_PUBLIC_ZONK_FACTORY_ADDRESS: ${NEXT_PUBLIC_ZONK_FACTORY_ADDRESS:?NEXT_PUBLIC_ZONK_FACTORY_ADDRESS must be set}
+        NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS: ${NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS:?NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS must be set}
     restart: unless-stopped
     environment:
       NODE_ENV: production

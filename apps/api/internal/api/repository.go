@@ -20,12 +20,14 @@ var ErrInvalidCursor = errors.New("invalid cursor")
 type Repository interface {
 	Ping(context.Context) error
 	ListTokens(context.Context, int64, int, string) (Page, error)
+	SearchTokens(context.Context, int64, string, int, string) (Page, error)
 	TrendingTokens(context.Context, int64, int, string) (Page, error)
 	Token(context.Context, int64, string) (Token, error)
 	CreatorTokens(context.Context, int64, string, int, string) (Page, error)
 	Creator(context.Context, int64, string, int, string) (CreatorProfile, error)
 	Trades(context.Context, int64, string, int, string) (TradePage, error)
 	Activity(context.Context, int64, string, int, string) (ActivityPage, error)
+	Chart(context.Context, int64, string, int) (ChartPage, error)
 	SaveMetadataDraft(context.Context, MetadataDraft) error
 	FinalizeMetadata(context.Context, int64, string, string, string) error
 }
@@ -46,7 +48,7 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 func (r *PostgresRepository) requireSchema(ctx context.Context) error {
 	var ready bool
 	e := r.pool.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7]
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.token_metadata_drafts') IS NOT NULL
 		AND to_regclass('public.token_holder_balances') IS NOT NULL
@@ -64,7 +66,7 @@ func (r *PostgresRepository) Ping(ctx context.Context) error { return r.pool.Pin
 
 const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),t.block_number,t.transaction_hash,t.log_index,
  c.curve_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
- m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,m.unique_trader_count,m.latest_trade_timestamp,m.current_price,m.market_cap,m.holder_count,
+ m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,m.unique_trader_count,m.latest_trade_timestamp,m.current_price,m.fully_diluted_value,m.holder_count,
  g.phase,g.liquidity_token_address,g.token_amount,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
  FROM (SELECT DISTINCT ON (token_address) * FROM tokens WHERE chain_id=$1 AND is_canonical ORDER BY token_address,block_number DESC,log_index DESC) t
  LEFT JOIN LATERAL (SELECT * FROM curves c WHERE c.chain_id=$1 AND c.token_address=t.token_address AND c.is_canonical ORDER BY c.block_number DESC,c.log_index DESC LIMIT 1)c ON true
@@ -76,16 +78,16 @@ func scanToken(row pgx.Row) (Token, error) {
 	var caddr, csupply, sold, reserve, start, slope, threshold, life *string
 	var phase, liq, ta, qa, la, lid *string
 	var tc, bc, sc, uniqueTraders, latestTrade, holders *int64
-	var vol, fees, price, marketCap *string
+	var vol, fees, price, fullyDilutedValue *string
 	var unlock *int64
-	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &marketCap, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
+	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &fullyDilutedValue, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
 	if e != nil {
 		return t, e
 	}
 	if caddr != nil {
 		t.Curve = &Curve{Address: *caddr, SoldSupply: value(sold), ReserveBalance: value(reserve), Supply: value(csupply), StartingPrice: value(start), Slope: value(slope), GraduationThreshold: value(threshold), Lifecycle: value(life)}
 	}
-	t.Metrics = Metrics{TradeCount: valueInt(tc), BuyCount: valueInt(bc), SellCount: valueInt(sc), Volume: value(vol), Fees: value(fees), UniqueTraderCount: valueInt(uniqueTraders), LatestTradeTimestamp: latestTrade, CurrentPrice: price, MarketCap: marketCap, HolderCount: holders}
+	t.Metrics = Metrics{TradeCount: valueInt(tc), BuyCount: valueInt(bc), SellCount: valueInt(sc), Volume: value(vol), Fees: value(fees), UniqueTraderCount: valueInt(uniqueTraders), LatestTradeTimestamp: latestTrade, CurrentPrice: price, FullyDilutedValue: fullyDilutedValue, HolderCount: holders}
 	if phase != nil {
 		t.Graduation = &Graduation{Phase: *phase, LiquidityToken: value(liq), TokenAmount: value(ta), QuoteAmount: value(qa), LiquidityAmount: value(la), LockID: value(lid), UnlockTimestamp: unlock}
 	}
@@ -158,6 +160,9 @@ type pageCursor struct {
 	LogIndex     int64  `json:"l,omitempty"`
 	TradeCount   int64  `json:"n,omitempty"`
 	Volume       string `json:"v,omitempty"`
+	RecentTrades int64  `json:"r,omitempty"`
+	RecentUsers  int64  `json:"u,omitempty"`
+	Query        string `json:"q,omitempty"`
 }
 
 func encodeCursor(c pageCursor) string {
@@ -179,10 +184,52 @@ func decodeCursor(raw, kind string) (pageCursor, error) {
 	if kind == "trending" && (!validCursorHex(c.TokenAddress, 40) || c.Volume == "") {
 		return pageCursor{}, ErrInvalidCursor
 	}
+	if kind == "search" && (!validCursorHex(c.TokenAddress, 40) || c.Query == "") {
+		return pageCursor{}, ErrInvalidCursor
+	}
 	if (kind == "trades" || kind == "activity") && (!validCursorHex(c.Transaction, 64) || c.LogIndex < 0) {
 		return pageCursor{}, ErrInvalidCursor
 	}
 	return c, nil
+}
+func (r *PostgresRepository) SearchTokens(ctx context.Context, chain int64, query string, limit int, rawCursor string) (Page, error) {
+	c, e := decodeCursor(rawCursor, "search")
+	if e != nil {
+		return Page{}, e
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	if rawCursor != "" && c.Query != query {
+		return Page{}, ErrInvalidCursor
+	}
+	args := []any{chain, query + "%"}
+	where := " AND (lower(t.name) LIKE $2 OR lower(t.symbol) LIKE $2 OR lower(t.token_address) LIKE $2)"
+	if rawCursor != "" {
+		args = append(args, c.BlockNumber, c.TokenAddress)
+		where += " AND (t.block_number < $3 OR (t.block_number = $3 AND t.token_address > $4))"
+	}
+	args = append(args, limit+1)
+	rows, e := r.pool.Query(ctx, tokenSelect+" WHERE 1=1"+where+" ORDER BY t.block_number DESC,t.token_address ASC LIMIT $"+strconv.Itoa(len(args)), args...)
+	if e != nil {
+		return Page{}, e
+	}
+	defer rows.Close()
+	out := Page{Items: []Token{}}
+	for rows.Next() {
+		t, e := scanToken(rows)
+		if e != nil {
+			return Page{}, e
+		}
+		out.Items = append(out.Items, t)
+	}
+	if e = rows.Err(); e != nil {
+		return Page{}, e
+	}
+	if len(out.Items) > limit {
+		out.Items = out.Items[:limit]
+		last := out.Items[len(out.Items)-1]
+		out.NextCursor = encodeCursor(pageCursor{Kind: "search", Query: query, BlockNumber: last.CreatedAt.BlockNumber, TokenAddress: last.Address})
+	}
+	return out, nil
 }
 func validCursorHex(value string, bytes int) bool {
 	if len(value) != bytes+2 || value[:2] != "0x" {
@@ -235,11 +282,13 @@ func (r *PostgresRepository) TrendingTokens(ctx context.Context, chain int64, li
 	args := []any{chain}
 	where := ""
 	if rawCursor != "" {
-		args = append(args, c.TradeCount, c.Volume, c.BlockNumber, c.TokenAddress)
-		where = " AND (COALESCE(m.trade_count,0) < $2 OR (COALESCE(m.trade_count,0) = $2 AND COALESCE(m.volume,0) < $3) OR (COALESCE(m.trade_count,0) = $2 AND COALESCE(m.volume,0) = $3 AND t.block_number < $4) OR (COALESCE(m.trade_count,0) = $2 AND COALESCE(m.volume,0) = $3 AND t.block_number = $4 AND t.token_address > $5))"
+		args = append(args, c.Volume, c.RecentTrades, c.RecentUsers, c.BlockNumber, c.TokenAddress)
+		where = " AND (COALESCE(m.recent_volume,0) < $2 OR (COALESCE(m.recent_volume,0) = $2 AND COALESCE(m.recent_trade_count,0) < $3) OR (COALESCE(m.recent_volume,0) = $2 AND COALESCE(m.recent_trade_count,0) = $3 AND COALESCE(m.recent_trader_count,0) < $4) OR (COALESCE(m.recent_volume,0) = $2 AND COALESCE(m.recent_trade_count,0) = $3 AND COALESCE(m.recent_trader_count,0) = $4 AND t.block_number < $5) OR (COALESCE(m.recent_volume,0) = $2 AND COALESCE(m.recent_trade_count,0) = $3 AND COALESCE(m.recent_trader_count,0) = $4 AND t.block_number = $5 AND t.token_address > $6))"
 	}
 	args = append(args, limit+1)
-	order := " ORDER BY COALESCE(m.trade_count,0) DESC,COALESCE(m.volume,0) DESC,t.block_number DESC,t.token_address ASC LIMIT $" + strconv.Itoa(len(args))
+	// Stable ranking: trailing canonical 24h volume, then trade count, then
+	// distinct traders, then launch block and address. The window is indexed.
+	order := " ORDER BY COALESCE(m.recent_volume,0) DESC,COALESCE(m.recent_trade_count,0) DESC,COALESCE(m.recent_trader_count,0) DESC,t.block_number DESC,t.token_address ASC LIMIT $" + strconv.Itoa(len(args))
 	rows, e := r.pool.Query(ctx, tokenSelect+" WHERE 1=1"+where+order, args...)
 	if e != nil {
 		return Page{}, e
@@ -259,7 +308,13 @@ func (r *PostgresRepository) TrendingTokens(ctx context.Context, chain int64, li
 	if len(out.Items) > limit {
 		out.Items = out.Items[:limit]
 		last := out.Items[len(out.Items)-1]
-		out.NextCursor = encodeCursor(pageCursor{Kind: "trending", TradeCount: last.Metrics.TradeCount, Volume: last.Metrics.Volume, BlockNumber: last.CreatedAt.BlockNumber, TokenAddress: last.Address})
+		var recentVolume string
+		var recentTrades, recentUsers int64
+		e = r.pool.QueryRow(ctx, `SELECT recent_volume::text,recent_trade_count,recent_trader_count FROM token_metrics WHERE chain_id=$1 AND lower(token_address)=lower($2)`, chain, last.Address).Scan(&recentVolume, &recentTrades, &recentUsers)
+		if e != nil {
+			return Page{}, e
+		}
+		out.NextCursor = encodeCursor(pageCursor{Kind: "trending", Volume: recentVolume, RecentTrades: recentTrades, RecentUsers: recentUsers, BlockNumber: last.CreatedAt.BlockNumber, TokenAddress: last.Address})
 	}
 	return out, nil
 }
@@ -366,7 +421,7 @@ func (r *PostgresRepository) Activity(ctx context.Context, chain int64, token st
 		where = " AND (block_number < $3 OR (block_number = $3 AND (transaction_hash < $4 OR (transaction_hash = $4 AND log_index < $5))))"
 	}
 	args = append(args, limit+1)
-	rows, e := r.pool.Query(ctx, `SELECT event_name,decoded,block_number,transaction_hash,log_index FROM chain_events WHERE chain_id=$1 AND is_canonical AND lower(decoded->>'token')=lower($2)`+where+` ORDER BY block_number DESC,transaction_hash DESC,log_index DESC LIMIT $`+strconv.Itoa(len(args)), args...)
+	rows, e := r.pool.Query(ctx, `SELECT event_name,decoded,block_number,transaction_hash,log_index FROM chain_events WHERE chain_id=$1 AND is_canonical AND (lower(decoded->>'token')=lower($2) OR (event_name='Transfer' AND lower(contract_address)=lower($2)))`+where+` ORDER BY block_number DESC,transaction_hash DESC,log_index DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if e != nil {
 		return ActivityPage{}, e
 	}
@@ -389,6 +444,27 @@ func (r *PostgresRepository) Activity(ctx context.Context, chain int64, token st
 		out.Items = out.Items[:limit]
 		last := out.Items[len(out.Items)-1]
 		out.NextCursor = encodeCursor(pageCursor{Kind: "activity", BlockNumber: last.BlockNumber, Transaction: last.TransactionHash, LogIndex: last.LogIndex})
+	}
+	return out, nil
+}
+func (r *PostgresRepository) Chart(ctx context.Context, chain int64, token string, limit int) (ChartPage, error) {
+	rows, e := r.pool.Query(ctx, `SELECT bucket_start,trade_count,buy_count,sell_count,volume::text,unique_trader_count,open_price::text,high_price::text,low_price::text,close_price::text
+		FROM (SELECT * FROM token_trade_buckets WHERE chain_id=$1 AND lower(token_address)=lower($2) ORDER BY bucket_start DESC LIMIT $3) buckets
+		ORDER BY bucket_start ASC`, chain, token, limit)
+	if e != nil {
+		return ChartPage{}, e
+	}
+	defer rows.Close()
+	out := ChartPage{Items: []ChartPoint{}}
+	for rows.Next() {
+		var point ChartPoint
+		if e = rows.Scan(&point.BucketStart, &point.TradeCount, &point.BuyCount, &point.SellCount, &point.Volume, &point.UniqueTraderCount, &point.OpenPrice, &point.HighPrice, &point.LowPrice, &point.ClosePrice); e != nil {
+			return ChartPage{}, e
+		}
+		out.Items = append(out.Items, point)
+	}
+	if e = rows.Err(); e != nil {
+		return ChartPage{}, e
 	}
 	return out, nil
 }

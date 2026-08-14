@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { TokenTrading } from "@/components/token-trading";
+import { TokenActivity } from "@/components/token-activity";
+import { TokenChart } from "@/components/token-chart";
+import Link from "next/link";
 import { api, apiAssetURL } from "@/lib/api";
 import { validAddress } from "@/lib/chain";
 import { readCurveOnchain, readTokenOnchain } from "@/lib/contracts";
@@ -31,13 +34,15 @@ export default function TokenDetailPage() {
       <div className="flex-1"><h1 className="text-3xl font-semibold text-white">{token.name}</h1><p className="mt-2 text-cyan-300">{token.symbol}</p>{token.description ? <p className="mt-4 max-w-2xl text-zinc-300">{token.description}</p> : <p className="mt-4 text-sm text-zinc-500">No off-chain description has been finalized.</p>}</div>
       <code className="text-xs text-zinc-500">{token.address}</code>
     </div>
-    <div className="mt-8 grid gap-4 sm:grid-cols-3"><Metric label="Indexed volume" value={token.metrics.volume} /><Metric label="Trades" value={String(token.metrics.trade_count)} /><Metric label="Onchain read" value={onchain ?? "Checking…"} /></div>
+    <div className="mt-8 grid gap-4 sm:grid-cols-4"><Metric label="Indexed volume" value={token.metrics.volume} /><Metric label="Trades" value={String(token.metrics.trade_count)} /><Metric label="Current price" value={token.metrics.current_price ?? "Not indexed"} /><Metric label="Onchain read" value={onchain ?? "Checking…"} /></div>
     <TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} />
+    <TokenChart tokenAddress={address} />
+    <TokenActivity tokenAddress={address} />
     <section className="mt-10 panel"><h2 className="text-lg font-semibold text-white">Canonical indexed state</h2><dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
-      <Detail label="Creator" value={token.creator} />
+      <div><dt className="text-zinc-500">Creator</dt><dd className="mt-1 break-all text-cyan-300"><Link href={`/creator/${token.creator}`}>{token.creator}</Link></dd></div>
       <Detail label="Created at block" value={String(token.created_at.block_number)} />
       <Detail label="Initial supply" value={token.initial_supply} />
-      <Detail label="Market cap" value={token.metrics.market_cap ?? "Not indexed"} />
+      <Detail label="Fully diluted value" value={token.metrics.fully_diluted_value ?? "Not indexed"} />
       <Detail label="Holder count" value={String(token.metrics.holder_count ?? "Not indexed")} />
       <div><dt className="text-zinc-500">Transaction</dt><dd className="mt-1 break-all text-zinc-200"><a href={`https://sepolia.basescan.org/tx/${token.created_at.transaction_hash}`} target="_blank" rel="noreferrer">{token.created_at.transaction_hash}</a></dd></div>
     </dl></section>

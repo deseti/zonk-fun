@@ -168,6 +168,7 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() {
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM token_trade_buckets WHERE chain_id=$1 AND token_address = ANY($2::text[])`, chain, addresses)
 		_, _ = repo.pool.Exec(ctx, `DELETE FROM chain_events WHERE chain_id=$1 AND block_hash=$2`, chain, blockHash)
 		_, _ = repo.pool.Exec(ctx, `DELETE FROM trades WHERE chain_id=$1 AND block_hash=$2`, chain, blockHash)
 		_, _ = repo.pool.Exec(ctx, `DELETE FROM token_metrics WHERE chain_id=$1 AND token_address = ANY($2::text[])`, chain, addresses)
@@ -179,7 +180,7 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 		if _, e = repo.pool.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,1000,$6,$7,$8,$9)`, chain, address, creator, "Fixture", "FIX", block, blockHash, tx, i); e != nil {
 			t.Fatal(e)
 		}
-		if _, e = repo.pool.Exec(ctx, `INSERT INTO token_metrics(chain_id,token_address,trade_count,volume,block_number,block_hash) VALUES($1,$2,$3,$4,$5,$6)`, chain, address, 3-i, 100-i, block, blockHash); e != nil {
+		if _, e = repo.pool.Exec(ctx, `INSERT INTO token_metrics(chain_id,token_address,trade_count,volume,recent_volume,recent_trade_count,recent_trader_count,block_number,block_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, chain, address, 3-i, 100-i, 300-i*100, 3-i, 2-i, block, blockHash); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -200,6 +201,17 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 	if _, e = repo.ListTokens(ctx, chain, 1, "not-a-cursor"); e != ErrInvalidCursor {
 		t.Fatalf("invalid token cursor=%v", e)
 	}
+	search, e := repo.SearchTokens(ctx, chain, "fixture", 1, "")
+	if e != nil || len(search.Items) != 1 || search.NextCursor == "" {
+		t.Fatalf("search=%+v err=%v", search, e)
+	}
+	search2, e := repo.SearchTokens(ctx, chain, "fixture", 2, search.NextCursor)
+	if e != nil || len(search2.Items) != 2 || search2.Items[0].Address == search.Items[0].Address {
+		t.Fatalf("search page=%+v err=%v", search2, e)
+	}
+	if _, e = repo.SearchTokens(ctx, chain, "different", 1, search.NextCursor); e != ErrInvalidCursor {
+		t.Fatalf("search cursor query mismatch=%v", e)
+	}
 	trend, e := repo.TrendingTokens(ctx, chain, 1, "")
 	if e != nil || len(trend.Items) != 1 || trend.Items[0].Address != addresses[0] {
 		t.Fatalf("trending=%+v err=%v", trend, e)
@@ -207,6 +219,13 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 	trend2, e := repo.TrendingTokens(ctx, chain, 2, trend.NextCursor)
 	if e != nil || len(trend2.Items) != 2 || trend2.Items[0].Address == trend.Items[0].Address {
 		t.Fatalf("trending page=%+v err=%v", trend2, e)
+	}
+	if _, e = repo.pool.Exec(ctx, `UPDATE token_metrics SET recent_volume=1,recent_trade_count=1,recent_trader_count=1 WHERE chain_id=$1 AND token_address = ANY($2::text[])`, chain, addresses); e != nil {
+		t.Fatal(e)
+	}
+	tiedTrend, e := repo.TrendingTokens(ctx, chain, 3, "")
+	if e != nil || len(tiedTrend.Items) != 3 || tiedTrend.Items[0].Address != addresses[0] || tiedTrend.Items[1].Address != addresses[1] || tiedTrend.Items[2].Address != addresses[2] {
+		t.Fatalf("deterministic trending ties=%+v err=%v", tiedTrend, e)
 	}
 	creatorPage, e := repo.CreatorTokens(ctx, chain, creator, 1, "")
 	if e != nil || len(creatorPage.Items) != 1 {
@@ -225,6 +244,13 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	transferTX := "0x" + strings.Repeat("e", 64)
+	if _, e = repo.pool.Exec(ctx, `INSERT INTO chain_events(chain_id,block_number,block_hash,transaction_hash,log_index,contract_address,topic0,event_name,decoded) VALUES($1,$2,$3,$4,99,$5,$6,'Transfer',jsonb_build_object('from','0x0000000000000000000000000000000000000001','to','0x0000000000000000000000000000000000000002','value','1'))`, chain, block, blockHash, transferTX, addresses[0], "0xtransfer"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = repo.pool.Exec(ctx, `INSERT INTO token_trade_buckets(chain_id,token_address,bucket_start,trade_count,buy_count,sell_count,volume,unique_trader_count,open_price,high_price,low_price,close_price,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,3600,1,1,0,10,1,7,7,7,7,$3,$4,$5,1),($1,$2,7200,1,0,1,11,1,7,8,6,8,$3,$4,$6,2)`, chain, addresses[0], block, blockHash, "0x"+strings.Repeat("f", 64), "0x"+strings.Repeat("a", 64)); e != nil {
+		t.Fatal(e)
+	}
 	trades, e := repo.Trades(ctx, chain, addresses[0], 2, "")
 	if e != nil || len(trades.Items) != 2 || trades.NextCursor == "" {
 		t.Fatalf("trades=%+v err=%v", trades, e)
@@ -238,8 +264,24 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 		t.Fatalf("activity=%+v err=%v", activity, e)
 	}
 	activity2, e := repo.Activity(ctx, chain, addresses[0], 2, activity.NextCursor)
-	if e != nil || len(activity2.Items) != 1 {
+	if e != nil || len(activity2.Items) != 2 {
 		t.Fatalf("activity page=%+v err=%v", activity2, e)
+	}
+	allActivity, e := repo.Activity(ctx, chain, addresses[0], 10, "")
+	transferFound := false
+	for _, event := range allActivity.Items {
+		transferFound = transferFound || event.EventName == "Transfer"
+	}
+	if e != nil || len(allActivity.Items) != 4 || !transferFound {
+		t.Fatalf("transfer activity=%+v err=%v", allActivity, e)
+	}
+	chart, e := repo.Chart(ctx, chain, addresses[0], 10)
+	if e != nil || len(chart.Items) != 2 || chart.Items[0].BucketStart != 3600 || chart.Items[1].OpenPrice == nil || *chart.Items[1].OpenPrice != "7" || chart.Items[1].HighPrice == nil || *chart.Items[1].HighPrice != "8" || chart.Items[1].LowPrice == nil || *chart.Items[1].LowPrice != "6" || chart.Items[1].ClosePrice == nil || *chart.Items[1].ClosePrice != "8" {
+		t.Fatalf("chart=%+v err=%v", chart, e)
+	}
+	emptyChart, e := repo.Chart(ctx, chain, addresses[1], 10)
+	if e != nil || emptyChart.Items == nil || len(emptyChart.Items) != 0 {
+		t.Fatalf("empty chart=%+v err=%v", emptyChart, e)
 	}
 	creatorProfile, e := repo.Creator(ctx, chain, creator, 1, "")
 	if e != nil || creatorProfile.Volume != "33" {

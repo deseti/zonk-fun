@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	indexer "github.com/deseti/zonk-fun/apps/indexer"
 	"github.com/ethereum/go-ethereum/common"
@@ -58,19 +59,10 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		addresses := []common.Address{}
-		contractEnv := os.Getenv("ZONK_INDEXER_CONTRACTS")
-		if contractEnv == "" {
-			factoryAddress := os.Getenv("ZONK_FACTORY_V3_ADDRESS")
-			if factoryAddress == "" {
-				factoryAddress = os.Getenv("ZONK_FACTORY_ADDRESS")
-			}
-			contractEnv = strings.Join([]string{factoryAddress, os.Getenv("FEE_MANAGER_V3_ADDRESS"), os.Getenv("GRADUATION_MANAGER_V3_ADDRESS"), os.Getenv("PERMANENT_LP_FEE_VAULT_V3_ADDRESS"), os.Getenv("PERMANENT_LP_CUSTODIAN_DEPLOYER_V3_ADDRESS"), os.Getenv("GRADUATION_SETTLEMENT_EXECUTOR_V3_ADDRESS")}, ",")
-		}
-		for _, v := range strings.Split(contractEnv, ",") {
-			if common.IsHexAddress(strings.TrimSpace(v)) {
-				addresses = append(addresses, common.HexToAddress(strings.TrimSpace(v)))
-			}
+		addresses, err := configuredContracts(os.Getenv("ZONK_INDEXER_CONTRACTS"), os.Getenv("ZONK_FACTORY_V3_ADDRESS"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zonk-indexer: %v\n", err)
+			os.Exit(1)
 		}
 		cfg := indexer.Config{RPCURL: rpcURL, DatabaseURL: dbURL, Mode: mode, ChainID: indexer.BaseSepoliaChainID, StartBlock: start, StopBlock: stopBlock, Confirmations: confirm, BatchSize: batch, Contracts: addresses}
 		if err := cfg.Validate(); err != nil {
@@ -94,4 +86,26 @@ func main() {
 	defer cancel()
 
 	<-shutdownCtx.Done()
+}
+
+func configuredContracts(contractEnv, factoryAddress string) ([]common.Address, error) {
+	contractEnv = strings.TrimSpace(contractEnv)
+	if contractEnv == "" {
+		if !common.IsHexAddress(strings.TrimSpace(factoryAddress)) {
+			return nil, errors.New("ZONK_FACTORY_V3_ADDRESS is required when ZONK_INDEXER_CONTRACTS is not set")
+		}
+		contractEnv = factoryAddress
+	}
+	addresses := []common.Address{}
+	for _, raw := range strings.Split(contractEnv, ",") {
+		value := strings.TrimSpace(raw)
+		if !common.IsHexAddress(value) {
+			return nil, fmt.Errorf("ZONK_INDEXER_CONTRACTS contains an invalid contract address: %q", value)
+		}
+		addresses = append(addresses, common.HexToAddress(value))
+	}
+	if len(addresses) == 0 {
+		return nil, errors.New("ZONK_FACTORY_V3_ADDRESS or ZONK_INDEXER_CONTRACTS is required in active mode")
+	}
+	return addresses, nil
 }

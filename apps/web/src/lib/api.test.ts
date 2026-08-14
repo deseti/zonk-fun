@@ -21,4 +21,11 @@ describe("API client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 500 })));
     await expect(api.listTokens()).rejects.toMatchObject({ status: 500, code: "http_error" });
   });
+  it("parses V3 pricing and canonical chart payloads", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token_address: "0x1", current_price: "7", fully_diluted_value: "7000", source: "indexed_v3_curve" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ bucket_start: 3600, trade_count: 1, buy_count: 1, sell_count: 0, volume: "10", unique_trader_count: 1, open_price: "6", high_price: "8", low_price: "5", close_price: "7" }] }), { status: 200 })));
+    await expect(api.pricing("0x1")).resolves.toMatchObject({ fully_diluted_value: "7000", source: "indexed_v3_curve" });
+    await expect(api.chart("0x1")).resolves.toMatchObject({ items: [expect.objectContaining({ open_price: "6", high_price: "8", low_price: "5", close_price: "7" })] });
+  });
 });

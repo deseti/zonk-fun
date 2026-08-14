@@ -49,11 +49,13 @@ for database in empty_test existing_test; do
   docker exec -e DATABASE_URL="$database_url" "$container_name" /bin/sh /zonk-db/migrate.sh >/dev/null
   docker exec "$container_name" psql -v ON_ERROR_STOP=1 -U zonk_test -d "$database" -tAc "
     DO \$\$ BEGIN
-      IF (SELECT array_agg(version ORDER BY version) FROM schema_migrations) IS DISTINCT FROM ARRAY[1,2,3,4,5] THEN RAISE EXCEPTION 'migration versions invalid'; END IF;
+      IF (SELECT array_agg(version ORDER BY version) FROM schema_migrations) IS DISTINCT FROM ARRAY[1,2,3,4,5,6,7] THEN RAISE EXCEPTION 'migration versions invalid'; END IF;
 
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='graduations' AND column_name='orphaned_at') THEN RAISE EXCEPTION 'orphaned_at missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='token_metrics' AND column_name='current_price') THEN RAISE EXCEPTION 'current_price missing'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='token_metrics' AND column_name='fully_diluted_value') THEN RAISE EXCEPTION 'fully_diluted_value missing'; END IF;
       IF to_regclass('public.token_holder_balances') IS NULL OR to_regclass('public.token_trade_buckets') IS NULL THEN RAISE EXCEPTION 'analytics tables missing'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='token_trade_buckets' AND column_name='open_price') THEN RAISE EXCEPTION 'OHLC columns missing'; END IF;
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tokens' AND column_name='is_legacy') THEN RAISE EXCEPTION 'legacy runtime column still present'; END IF;
     END \$\$;" >/dev/null
 done
