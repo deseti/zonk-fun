@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canPrepareTransaction, derivePrivyWalletState, hasPrivyAppIdValue, parsePrivyChainId, privyConfig, privyLoginMethods } from "./wallet";
+import { canPrepareTransaction, derivePrivyWalletState, hasPrivyAppIdValue, isExternalWallet, isPrivyEmbeddedWallet, parsePrivyChainId, privyConfig, privyExternalWalletList, privyLoginMethods } from "./wallet";
 
 const base = {
   ready: true,
@@ -44,14 +44,24 @@ describe("Privy wallet state", () => {
     expect(hasPrivyAppIdValue("public-app-id")).toBe(true);
   });
 
-  it("keeps the provider Privy-only", () => {
+  it("puts EVM wallet login in the main modal and enables embedded-wallet confirmation UI", () => {
     expect(privyConfig.defaultChain?.id).toBe(84532);
     expect(privyConfig.supportedChains?.map((chain) => chain.id)).toEqual([84532]);
-    expect(privyLoginMethods).toEqual(["email", "google", "twitter"]);
-    expect(privyConfig.loginMethods).toEqual(["email", "google", "twitter"]);
-    expect(privyConfig.loginMethods).not.toContain("wallet");
+    expect(privyLoginMethods).toEqual(["wallet", "email", "google", "twitter"]);
+    expect(privyConfig.loginMethods).toEqual(["wallet", "email", "google", "twitter"]);
+    expect(privyConfig.appearance?.showWalletLoginFirst).toBe(true);
+    expect(privyConfig.appearance?.walletChainType).toBe("ethereum-only");
+    expect(privyConfig.appearance?.walletList).toEqual(privyExternalWalletList);
+    expect(privyExternalWalletList).toEqual(expect.arrayContaining(["detected_ethereum_wallets", "metamask", "wallet_connect"]));
     expect(privyConfig.embeddedWallets?.ethereum?.createOnLogin).toBe("all-users");
-    expect(privyConfig.embeddedWallets?.showWalletUIs).toBe(false);
+    expect(privyConfig.embeddedWallets?.showWalletUIs).toBe(true);
     expect(privyConfig.externalWallets).toEqual({});
+  });
+
+  it("keeps external and Privy embedded wallets as distinct modes", () => {
+    expect(isPrivyEmbeddedWallet({ walletClientType: "privy" })).toBe(true);
+    expect(isExternalWallet({ walletClientType: "privy" })).toBe(false);
+    expect(isPrivyEmbeddedWallet({ walletClientType: "metamask" })).toBe(false);
+    expect(isExternalWallet({ walletClientType: "metamask" })).toBe(true);
   });
 });

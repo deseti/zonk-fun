@@ -1,6 +1,8 @@
 import { encodeFunctionData, getAddress, parseEventLogs, type Address, type Hex } from "viem";
 
 export const BASE_SEPOLIA_CHAIN_ID = 84532 as const;
+export const FIXED_TOKEN_SUPPLY = BigInt("1000000000000000000000000000");
+export const CURVE_ALLOCATION = BigInt("800000000000000000000000000");
 
 export const baseSepolia = {
   id: BASE_SEPOLIA_CHAIN_ID,
@@ -12,7 +14,13 @@ export const baseSepolia = {
 
 export type ContractAddresses = {
   zonkFactory?: `0x${string}`;
+  /** @deprecated test-only compatibility; production resolves curves via factory.curveOf. */
   zonkCurve?: `0x${string}`;
+  feeManager?: `0x${string}`;
+  graduationManager?: `0x${string}`;
+  permanentLPFeeVault?: `0x${string}`;
+  permanentLPCustodianDeployer?: `0x${string}`;
+  graduationSettlementExecutor?: `0x${string}`;
 };
 
 const address = (value: string | undefined): `0x${string}` | undefined => {
@@ -21,32 +29,168 @@ const address = (value: string | undefined): `0x${string}` | undefined => {
 };
 
 export const contractAddresses: ContractAddresses = {
-  zonkFactory: address(process.env.NEXT_PUBLIC_ZONK_FACTORY_ADDRESS),
-  zonkCurve: address(process.env.NEXT_PUBLIC_ZONK_CURVE_ADDRESS),
+  zonkFactory: address(process.env.NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS ?? process.env.NEXT_PUBLIC_ZONK_FACTORY_ADDRESS),
+  feeManager: address(process.env.NEXT_PUBLIC_FEE_MANAGER_V3_ADDRESS),
+  graduationManager: address(process.env.NEXT_PUBLIC_GRADUATION_MANAGER_V3_ADDRESS),
+  permanentLPFeeVault: address(process.env.NEXT_PUBLIC_PERMANENT_LP_FEE_VAULT_V3_ADDRESS),
+  permanentLPCustodianDeployer: address(process.env.NEXT_PUBLIC_PERMANENT_LP_CUSTODIAN_DEPLOYER_V3_ADDRESS),
+  graduationSettlementExecutor: address(process.env.NEXT_PUBLIC_GRADUATION_SETTLEMENT_EXECUTOR_V3_ADDRESS),
 };
 
 export const zonkFactoryAbi = [
-  { type: "function", name: "createToken", stateMutability: "nonpayable", inputs: [{ name: "name", type: "string" }, { name: "symbol", type: "string" }, { name: "initialSupply", type: "uint256" }], outputs: [{ name: "token", type: "address" }] },
+  { type: "function", name: "createToken", stateMutability: "nonpayable", inputs: [{ name: "name", type: "string" }, { name: "symbol", type: "string" }, { name: "userSalt", type: "bytes32" }], outputs: [{ name: "token", type: "address" }, { name: "curve", type: "address" }] },
+  { type: "function", name: "curveOf", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "address" }] },
   { type: "function", name: "isToken", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "bool" }] },
-  { type: "function", name: "tokenInfo", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ name: "creator", type: "address" }, { name: "launchState", type: "uint8" }] },
+  { type: "function", name: "tokenInfo", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ name: "creator", type: "address" }, { name: "curve", type: "address" }] },
   { type: "function", name: "tokensByCreator", stateMutability: "view", inputs: [{ name: "creator", type: "address" }], outputs: [{ type: "address[]" }] },
-  { type: "event", name: "TokenCreated", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "creator", type: "address", indexed: true }, { name: "name", type: "string", indexed: false }, { name: "symbol", type: "string", indexed: false }, { name: "initialSupply", type: "uint256", indexed: false }] },
+  { type: "event", name: "TokenLaunchedV3", anonymous: false, inputs: [{ name: "creator", type: "address", indexed: true }, { name: "token", type: "address", indexed: true }, { name: "curve", type: "address", indexed: true }, { name: "protocolVersion", type: "string", indexed: false }, { name: "totalSupply", type: "uint256", indexed: false }, { name: "curveAllocation", type: "uint256", indexed: false }, { name: "lpAllocation", type: "uint256", indexed: false }, { name: "initialCreatorPayout", type: "address", indexed: false }, { name: "canonicalPool", type: "address", indexed: false }, { name: "launchSeed", type: "bytes32", indexed: false }, { name: "candidateSalt", type: "bytes32", indexed: false }, { name: "attemptIndex", type: "uint16", indexed: false }] },
 ] as const;
 
-export type TokenCreated = { token: Address; creator: Address; name: string; symbol: string; initialSupply: bigint };
-export const encodeCreateToken = (name: string, symbol: string, initialSupply: bigint): Hex => encodeFunctionData({ abi: zonkFactoryAbi, functionName: "createToken", args: [name, symbol, initialSupply] });
-export function parseTokenCreatedReceipt(receipt: { status: string; logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[] }, factory: Address): TokenCreated {
+export const feeManagerV3Abi = [
+  { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "treasury", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "protocolVersionHash", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+] as const;
+
+export const graduationManagerV3Abi = [
+  { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "uniswapV3Factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "weth", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "permanentLPFeeVault", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "permanentLPCustodianDeployer", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "nonfungiblePositionManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "settlementExecutor", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+export const permanentLPFeeVaultV3Abi = [
+  { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "graduationManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "weth", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "permanentLPCustodianDeployer", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+export const permanentLPCustodianV3Abi = [
+  { type: "function", name: "launchToken", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "positionRegistered", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "boundTokenId", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "feeVault", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "nonfungiblePositionManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+export const graduationSettlementExecutorV3Abi = [
+  { type: "function", name: "graduationManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "nonfungiblePositionManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "weth", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+export type TokenLaunched = { token: Address; curve: Address; creator: Address; protocolVersion: string; totalSupply: bigint; curveAllocation: bigint; lpAllocation: bigint; canonicalPool: Address };
+export function encodeCreateToken(name: string, symbol: string, userSalt: Hex): Hex;
+export function encodeCreateToken(name: string, symbol: string, _legacyPrice: bigint, _legacySlope: bigint, _legacyThreshold: bigint): Hex;
+export function encodeCreateToken(name: string, symbol: string, userSaltOrLegacy: Hex | bigint, _legacySlope?: bigint, _legacyThreshold?: bigint): Hex {
+  const userSalt = typeof userSaltOrLegacy === "string" ? userSaltOrLegacy : (`0x${userSaltOrLegacy.toString(16).padStart(64, "0")}` as Hex);
+  return encodeFunctionData({ abi: zonkFactoryAbi, functionName: "createToken", args: [name, symbol, userSalt] });
+}
+export function parseTokenLaunchedReceipt(receipt: { status: string; logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[] }, factory: Address): TokenLaunched {
   if (receipt.status !== "success") throw new Error("token creation transaction reverted");
   const receiptLogs = [...receipt.logs] as unknown as Parameters<typeof parseEventLogs>[0]["logs"];
-  const logs = parseEventLogs({ abi: zonkFactoryAbi, eventName: "TokenCreated", logs: receiptLogs, strict: true }).filter((log) => getAddress(log.address) === getAddress(factory));
-  if (logs.length !== 1) throw new Error("confirmed receipt did not contain exactly one TokenCreated event");
+  const logs = parseEventLogs({ abi: zonkFactoryAbi, eventName: "TokenLaunchedV3", logs: receiptLogs, strict: true }).filter((log) => getAddress(log.address) === getAddress(factory));
+  if (logs.length !== 1) throw new Error("confirmed receipt did not contain exactly one TokenLaunched event");
   const args = logs[0].args;
-  if (!args.token || !args.creator || args.initialSupply === undefined) throw new Error("TokenCreated event is malformed");
-  return { token: getAddress(args.token), creator: getAddress(args.creator), name: args.name, symbol: args.symbol, initialSupply: args.initialSupply };
+  if (!args.token || !args.curve || !args.creator || args.totalSupply !== FIXED_TOKEN_SUPPLY || args.protocolVersion !== "endpoint-cp-v3") throw new Error("TokenLaunchedV3 event is malformed");
+  return { token: getAddress(args.token), curve: getAddress(args.curve), creator: getAddress(args.creator), protocolVersion: args.protocolVersion, totalSupply: args.totalSupply, curveAllocation: args.curveAllocation, lpAllocation: args.lpAllocation, canonicalPool: getAddress(args.canonicalPool) };
 }
 
 export const zonkCurveAbi = [
-  { type: "function", name: "curve", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ name: "token", type: "address" }, { name: "creator", type: "address" }, { name: "curveSupply", type: "uint256" }, { name: "soldSupply", type: "uint256" }, { name: "reserveBalance", type: "uint256" }, { name: "startingPrice", type: "uint256" }, { name: "slope", type: "uint256" }, { name: "graduationThreshold", type: "uint256" }, { name: "lifecycle", type: "uint8" }] },
-  { type: "function", name: "quoteBuy", stateMutability: "view", inputs: [{ name: "token", type: "address" }, { name: "tokenAmount", type: "uint256" }], outputs: [{ name: "reserveIn", type: "uint256" }, { name: "curveCost", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }] },
-  { type: "function", name: "quoteSell", stateMutability: "view", inputs: [{ name: "token", type: "address" }, { name: "tokenAmount", type: "uint256" }], outputs: [{ name: "reserveOut", type: "uint256" }, { name: "curveValue", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }] },
+  { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "token", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "creator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "soldSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "activeEthReserve", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "graduated", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "quoteBuy", stateMutability: "view", inputs: [{ name: "grossInput", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "submittedGross", type: "uint256" }, { name: "acceptedGross", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netCurveInput", type: "uint256" }, { name: "refund", type: "uint256" }, { name: "tokensOut", type: "uint256" }, { name: "reachesGraduation", type: "bool" }] }] },
+  { type: "function", name: "quoteSell", stateMutability: "view", inputs: [{ name: "tokensIn", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "tokensIn", type: "uint256" }, { name: "grossCurveOutput", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netSellerOutput", type: "uint256" }] }] },
+  { type: "function", name: "buy", stateMutability: "payable", inputs: [{ name: "minTokensOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "submittedGross", type: "uint256" }, { name: "acceptedGross", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netCurveInput", type: "uint256" }, { name: "refund", type: "uint256" }, { name: "tokensOut", type: "uint256" }, { name: "reachesGraduation", type: "bool" }] }] },
+  { type: "function", name: "sell", stateMutability: "nonpayable", inputs: [{ name: "tokensIn", type: "uint256" }, { name: "minEthOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "tokensIn", type: "uint256" }, { name: "grossCurveOutput", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netSellerOutput", type: "uint256" }] }] },
+  { type: "event", name: "TokensBought", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "buyer", type: "address", indexed: true }, { name: "submittedGross", type: "uint256", indexed: false }, { name: "acceptedGross", type: "uint256", indexed: false }, { name: "netCurveInput", type: "uint256", indexed: false }, { name: "tokensOut", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }, { name: "refund", type: "uint256", indexed: false }] },
+  { type: "event", name: "TokensSold", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "seller", type: "address", indexed: true }, { name: "tokensIn", type: "uint256", indexed: false }, { name: "grossCurveOutput", type: "uint256", indexed: false }, { name: "netSellerOutput", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }] },
 ] as const;
+
+export const erc20TradeAbi = [
+  { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+] as const;
+
+export type BuyQuote = { reserveIn: bigint; curveCost: bigint; protocolFee: bigint; creatorFee: bigint; acceptedGross?: bigint; netCurveInput?: bigint; tokensOut?: bigint };
+export type SellQuote = { reserveOut: bigint; curveValue: bigint; protocolFee: bigint; creatorFee: bigint; netSellerOutput?: bigint };
+export type TradeReceipt = {
+  side: "buy" | "sell";
+  token: Address;
+  trader: Address;
+  tokenAmount: bigint;
+  reserveAmount: bigint;
+  curveValue: bigint;
+  protocolFee: bigint;
+  creatorFee: bigint;
+};
+
+const BPS_SCALE = BigInt(10_000);
+
+export function maxInputWithSlippage(amount: bigint, slippageBps: number): bigint {
+  validateSlippage(slippageBps);
+  return (amount * (BPS_SCALE + BigInt(slippageBps)) + BPS_SCALE - BigInt(1)) / BPS_SCALE;
+}
+
+export function minOutputWithSlippage(amount: bigint, slippageBps: number): bigint {
+  validateSlippage(slippageBps);
+  return amount * (BPS_SCALE - BigInt(slippageBps)) / BPS_SCALE;
+}
+
+function validateSlippage(slippageBps: number) {
+  if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 5_000) {
+    throw new Error("Slippage must be between 0% and 50%.");
+  }
+}
+
+export function encodeBuy(minTokensOut: bigint, deadline: bigint): Hex;
+export function encodeBuy(_token: Address, tokenAmount: bigint, _maxReserveIn: bigint, deadline: bigint): Hex;
+export function encodeBuy(minTokensOutOrToken: bigint | Address, amountOrDeadline: bigint, _legacyMax?: bigint, legacyDeadline?: bigint): Hex {
+  const minTokensOut = typeof minTokensOutOrToken === "string" ? amountOrDeadline : minTokensOutOrToken;
+  const deadline = legacyDeadline ?? amountOrDeadline;
+  return encodeFunctionData({ abi: zonkCurveAbi, functionName: "buy", args: [minTokensOut, deadline] });
+}
+
+export function encodeSell(tokensIn: bigint, minEthOut: bigint, deadline: bigint): Hex;
+export function encodeSell(_token: Address, tokensIn: bigint, minEthOut: bigint, deadline: bigint): Hex;
+export function encodeSell(tokenOrTokens: Address | bigint, amountOrMin: bigint, minOrDeadline: bigint, legacyDeadline?: bigint): Hex {
+  const tokensIn = typeof tokenOrTokens === "string" ? amountOrMin : tokenOrTokens;
+  const minEthOut = typeof tokenOrTokens === "string" ? minOrDeadline : amountOrMin;
+  const deadline = legacyDeadline ?? minOrDeadline;
+  return encodeFunctionData({ abi: zonkCurveAbi, functionName: "sell", args: [tokensIn, minEthOut, deadline] });
+}
+
+export const encodeApprove = (spender: Address, amount: bigint): Hex =>
+  encodeFunctionData({ abi: erc20TradeAbi, functionName: "approve", args: [spender, amount] });
+
+export function parseTradeReceipt(
+  receipt: { status: string; logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[] },
+  curve: Address,
+  expectedSide: "buy" | "sell",
+): TradeReceipt {
+  if (receipt.status !== "success") throw new Error("trade transaction reverted");
+  const eventName = expectedSide === "buy" ? "TokensBought" : "TokensSold";
+  const receiptLogs = [...receipt.logs] as unknown as Parameters<typeof parseEventLogs>[0]["logs"];
+  if (expectedSide === "buy") {
+    const logs = parseEventLogs({ abi: zonkCurveAbi, eventName: "TokensBought", logs: receiptLogs, strict: true })
+      .filter((log) => getAddress(log.address) === getAddress(curve));
+    if (logs.length !== 1) throw new Error(`confirmed receipt did not contain exactly one ${eventName} event`);
+    const args = logs[0].args;
+    return { side: "buy", token: getAddress(args.token), trader: getAddress(args.buyer), tokenAmount: args.tokensOut, reserveAmount: args.acceptedGross, curveValue: args.netCurveInput, protocolFee: args.protocolFee, creatorFee: args.creatorFee };
+  }
+  const logs = parseEventLogs({ abi: zonkCurveAbi, eventName: "TokensSold", logs: receiptLogs, strict: true })
+    .filter((log) => getAddress(log.address) === getAddress(curve));
+  if (logs.length !== 1) throw new Error(`confirmed receipt did not contain exactly one ${eventName} event`);
+  const args = logs[0].args;
+  return { side: "sell", token: getAddress(args.token), trader: getAddress(args.seller), tokenAmount: args.tokensIn, reserveAmount: args.grossCurveOutput, curveValue: args.netSellerOutput, protocolFee: args.protocolFee, creatorFee: args.creatorFee };
+}

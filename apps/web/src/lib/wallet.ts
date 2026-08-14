@@ -1,11 +1,20 @@
 import { baseSepolia, BASE_SEPOLIA_CHAIN_ID } from "@zonk/contracts-sdk";
-import type { PrivyClientConfig } from "@privy-io/react-auth";
+import type { BaseConnectedEthereumWallet, PrivyClientConfig } from "@privy-io/react-auth";
 import { isBaseSepolia } from "@/lib/chain";
 
 export const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ?? "";
 export const hasPrivyAppIdValue = (value: string | undefined) => Boolean(value?.trim());
 export const hasPrivyAppId = hasPrivyAppIdValue(privyAppId);
-export const privyLoginMethods = ["email", "google", "twitter"] as const;
+export const privyLoginMethods = ["wallet", "email", "google", "twitter"] as const;
+export const privyExternalWalletList = ["detected_ethereum_wallets", "metamask", "coinbase_wallet", "rainbow", "wallet_connect"] as const;
+
+export function isPrivyEmbeddedWallet(wallet: Pick<BaseConnectedEthereumWallet, "walletClientType">) {
+  return wallet.walletClientType === "privy";
+}
+
+export function isExternalWallet(wallet: Pick<BaseConnectedEthereumWallet, "walletClientType">) {
+  return !isPrivyEmbeddedWallet(wallet);
+}
 
 export function parsePrivyChainId(chainId: string | number | undefined): number | undefined {
   if (chainId === undefined) return undefined;
@@ -50,13 +59,16 @@ export function canPrepareTransaction(chainId: number | undefined, authenticated
 export const privyConfig: PrivyClientConfig = {
   defaultChain: baseSepolia,
   supportedChains: [baseSepolia],
-  // Wallet login is intentionally excluded. Users authenticate with Privy and
-  // receive an embedded Ethereum wallet created by Privy.
   loginMethods: [...privyLoginMethods],
+  appearance: {
+    showWalletLoginFirst: true,
+    walletChainType: "ethereum-only",
+    walletList: [...privyExternalWalletList],
+  },
   externalWallets: {},
   embeddedWallets: {
     ethereum: { createOnLogin: "all-users" },
-    showWalletUIs: false,
+    showWalletUIs: true,
   },
 };
 

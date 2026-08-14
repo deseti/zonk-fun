@@ -4,7 +4,7 @@ import { logoutPrivy, switchPrivyEmbeddedWallet } from "./wallet-status";
 
 describe("Privy account controls", () => {
   it("keeps the logged-out login label visible", () => {
-    expect(renderToStaticMarkup(<button>Log in with Privy</button>)).toContain("Log in with Privy");
+    expect(renderToStaticMarkup(<button>Log in: wallet, email, or social</button>)).toContain("wallet, email, or social");
   });
 
   it.each(["wrong network", "wallet creating", "smart wallet ready"])("keeps Log out visible for authenticated %s state", (state) => {

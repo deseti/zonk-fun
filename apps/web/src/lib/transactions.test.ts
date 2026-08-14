@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { canCreateToken, idleTransaction, MAX_IMAGE_BYTES, validateCreateToken, type TransactionStatus } from "./transactions";
+import { afterEach, describe, expect, it } from "vitest";
+import { canCreateToken, clearPendingTrade, idleTransaction, MAX_IMAGE_BYTES, pendingTradeKey, persistPendingTrade, readPendingTrade, validateCreateToken, type TradeTransactionStatus, type TransactionStatus } from "./transactions";
+
+afterEach(() => localStorage.clear());
 
 describe("transaction foundation", () => {
   it("defines distinct lifecycle states", () => {
@@ -8,6 +10,24 @@ describe("transaction foundation", () => {
     expect(idleTransaction.status).toBe("idle");
     expect(states).toContain("failed");
     expect(states).toContain("rejected");
+  });
+
+  it("defines the required trade transaction state machine", () => {
+    const states: TradeTransactionStatus[] = ["idle", "preparing", "awaiting_approval", "approval_confirming", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown", "confirmed", "reverted", "replaced", "failed"];
+    expect(new Set(states).size).toBe(12);
+  });
+
+  it("persists and isolates pending trades by wallet and token", () => {
+    const wallet = "0x0000000000000000000000000000000000000001" as const;
+    const token = "0x0000000000000000000000000000000000000002" as const;
+    const hash = `0x${"ab".repeat(32)}` as const;
+    const recovery = { sender: wallet, nonce: 3, to: token, value: "0", input: "0x1234", nextScanBlock: "99" } as const;
+    persistPendingTrade({ version: 1, walletAddress: wallet, tokenAddress: token, side: "sell", hash, status: "confirmation_unknown", submittedAt: 1, recovery });
+    expect(readPendingTrade(token, wallet)).toMatchObject({ side: "sell", hash, status: "confirmation_unknown", recovery });
+    expect(readPendingTrade(token, "0x0000000000000000000000000000000000000003")).toBeNull();
+    expect(localStorage.getItem(pendingTradeKey(token, wallet))).not.toBeNull();
+    clearPendingTrade(token, wallet);
+    expect(readPendingTrade(token, wallet)).toBeNull();
   });
 
   it("only allows creation on Base Sepolia while authenticated and idle", () => {
