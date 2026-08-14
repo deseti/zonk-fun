@@ -126,7 +126,12 @@ contract BaseSepoliaUniswapV3ForkTest is Test {
     }
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("BASE_SEPOLIA_RPC_URL"), PINNED_BLOCK);
+        string memory rpcURL = vm.envOr("BASE_SEPOLIA_RPC_URL", string(""));
+        if (bytes(rpcURL).length == 0) {
+            vm.skip(true, "BASE_SEPOLIA_RPC_URL is not configured");
+            return;
+        }
+        vm.createSelectFork(rpcURL, PINNED_BLOCK);
         assertEq(block.chainid, BASE_SEPOLIA_CHAIN_ID);
         canonicalFactory = IUniswapV3FactoryMinimal(UNISWAP_V3_FACTORY);
     }

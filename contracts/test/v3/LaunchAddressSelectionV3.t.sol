@@ -98,7 +98,9 @@ contract LaunchAddressSelectionV3Test is ZonkV3TestBase {
     }
 
     function testActualPoolReservationSupportsBothOrderingBranches() public {
-        address lowWeth = address(0x100);
+        // Keep WETH below the CREATE2 token candidates without using Foundry's
+        // reserved precompile-address range.
+        address lowWeth = address(0x1_0000);
         address highWeth = address(type(uint160).max);
         vm.etch(lowWeth, hex"00");
         vm.etch(highWeth, hex"00");
