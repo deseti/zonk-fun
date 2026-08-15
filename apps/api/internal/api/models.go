@@ -9,6 +9,10 @@ type Token struct {
 	Description   string      `json:"description,omitempty"`
 	ImageURL      string      `json:"image_url,omitempty"`
 	MetadataURL   string      `json:"metadata_url,omitempty"`
+	WebsiteURL    string      `json:"website_url,omitempty"`
+	XURL          string      `json:"x_url,omitempty"`
+	TelegramURL   string      `json:"telegram_url,omitempty"`
+	DiscordURL    string      `json:"discord_url,omitempty"`
 	CreatedAt     BlockRef    `json:"created_at"`
 	Curve         *Curve      `json:"curve,omitempty"`
 	Metrics       Metrics     `json:"metrics"`
@@ -22,6 +26,10 @@ type MetadataDraft struct {
 	Description   string `json:"description"`
 	ImageURL      string `json:"image_url"`
 	MetadataURL   string `json:"metadata_url"`
+	WebsiteURL    string `json:"website_url,omitempty"`
+	XURL          string `json:"x_url,omitempty"`
+	TelegramURL   string `json:"telegram_url,omitempty"`
+	DiscordURL    string `json:"discord_url,omitempty"`
 }
 type BlockRef struct {
 	BlockNumber     int64  `json:"block_number"`
@@ -84,7 +92,9 @@ type ChartPoint struct {
 	ClosePrice        *string `json:"close_price"`
 }
 type ChartPage struct {
-	Items []ChartPoint `json:"items"`
+	Interval           string       `json:"interval"`
+	SupportedIntervals []string     `json:"supported_intervals"`
+	Candles            []ChartPoint `json:"candles"`
 }
 type Pricing struct {
 	TokenAddress      string  `json:"token_address"`

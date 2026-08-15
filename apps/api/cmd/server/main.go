@@ -48,7 +48,23 @@ func main() {
 	if e != nil {
 		panic(e)
 	}
-	handler := api.NewHandlerWithObjectStore(repo, chainID, requestTimeout, logger, objects)
+	feed := os.Getenv("CHAINLINK_ETH_USD_FEED")
+	if feed == "" {
+		feed = api.BaseSepoliaETHUSDFeed
+	}
+	maxAge := time.Hour
+	if s := os.Getenv("CHAINLINK_ETH_USD_MAX_AGE"); s != "" {
+		parsed, err := time.ParseDuration(s)
+		if err != nil || parsed <= 0 {
+			panic("CHAINLINK_ETH_USD_MAX_AGE must be a positive duration")
+		}
+		maxAge = parsed
+	}
+	priceReader, e := api.NewChainlinkETHUSDReader(os.Getenv("BASE_SEPOLIA_RPC_URL"), feed, maxAge, &http.Client{Timeout: requestTimeout})
+	if e != nil {
+		logger.Warn("ETH/USD oracle disabled", "error", e)
+	}
+	handler := api.NewHandlerWithDependencies(repo, chainID, requestTimeout, logger, objects, priceReader)
 	addr := fmt.Sprintf("%s:%s", host, port)
 	fmt.Printf("zonk-api listening on %s\n", addr)
 

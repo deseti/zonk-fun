@@ -3,20 +3,23 @@
 import { usePrivy, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
 import { useSmartWallets, type SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatEther, formatUnits, type Address } from "viem";
+import { useState } from "react";
+import type { Address } from "viem";
 import { TokenTradePanel, type TradeExecution, type TradeResume } from "@/components/token-trade-panel";
 import { api } from "@/lib/api";
+import { formatNative, formatTokenAmount, formatWeiUsd } from "@/lib/format";
 import { captureTradeRecovery, checkTrade, confirmTrade, createExternalWalletClient, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitExternalBuy, submitExternalSell, submitSell } from "@/lib/contracts";
 import type { TradeRecovery } from "@/lib/transactions";
 import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
+import { useOraclePrice } from "@/providers/oracle-price-provider";
 
-export function TokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string; creator: Address }) {
-  if (!hasPrivyAppId) return <div className="mt-10 panel text-amber-200">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
-  return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} />;
+export function TokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null }) {
+  if (!hasPrivyAppId) return <div className="status-box status-warning">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
+  return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} tokenPriceWei={tokenPriceWei} />;
 }
 
-function PrivyTokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
+function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddress: Address; symbol: string; tokenPriceWei?: string | null }) {
   const { authenticated } = usePrivy();
   const { getClientForChain } = useSmartWallets();
   const { mode, activeAddress: walletAddress, activeChainId: chainId, externalWallet } = useActiveWallet();
@@ -90,18 +93,17 @@ function PrivyTokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; sy
     void Promise.all(tradeInvalidationKeys(tokenAddress).map((queryKey) => queryClient.invalidateQueries({ queryKey })));
   };
 
-  if (availabilityQuery.isError) return <div className="mt-10 panel text-red-300">The deployed curve could not be read from Base Sepolia.</div>;
-  if (availabilityQuery.isPending) return <div className="mt-10 panel text-zinc-400">Checking the token’s Base Sepolia curve…</div>;
-	if (availabilityQuery.data === null) return <div className="mt-10 panel text-amber-200">The canonical endpoint curve is not available for this token.</div>;
-  return <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-    <TokenTradePanel
-      key={`${walletAddress?.toLowerCase() ?? "no-wallet"}:${tokenAddress.toLowerCase()}`}
+  if (availabilityQuery.isError) return <div className="status-box status-error">The deployed curve could not be read from Base Sepolia.</div>;
+  if (availabilityQuery.isPending) return <div className="status-box text-zinc-400">Checking the token’s Base Sepolia curve…</div>;
+	if (availabilityQuery.data === null) return <div className="status-box status-warning">The canonical endpoint curve is not available for this token.</div>;
+  return <TokenTradePanel
       authenticated={authenticated}
       walletMode={mode}
       chainId={chainId}
       walletAddress={walletAddress}
       tokenAddress={tokenAddress}
       symbol={symbol}
+      tokenPriceWei={tokenPriceWei}
       state={stateQuery.data}
       statePending={stateQuery.isPending && Boolean(walletAddress)}
       stateError={stateQuery.isError ? "Trading is unavailable because balances or an active Zonk curve could not be loaded." : undefined}
@@ -111,9 +113,7 @@ function PrivyTokenTrading({ tokenAddress, symbol }: { tokenAddress: Address; sy
       resume={resume}
       check={check}
       onConfirmed={onConfirmed}
-    />
-    <TradeHistory tokenAddress={tokenAddress} symbol={symbol} />
-  </div>;
+    />;
 }
 
 export function selectActiveSigner(
@@ -156,32 +156,37 @@ export function loadActiveTradeState(tokenAddress: Address, walletAddress: Addre
   return readTradeState(tokenAddress, walletAddress);
 }
 
-function TradeHistory({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
+export function TokenTradeHistory({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
+  if (!hasPrivyAppId) return <TradeHistory tokenAddress={tokenAddress} symbol={symbol} />;
+  return <PrivyTradeHistory tokenAddress={tokenAddress} symbol={symbol} />;
+}
+
+function PrivyTradeHistory({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
+  const { activeAddress } = useActiveWallet();
+  return <TradeHistory tokenAddress={tokenAddress} symbol={symbol} walletAddress={activeAddress} />;
+}
+
+function TradeHistory({ tokenAddress, symbol, walletAddress }: { tokenAddress: Address; symbol: string; walletAddress?: Address }) {
+  const { reference } = useOraclePrice();
+  const [tab, setTab] = useState<"recent" | "yours">("recent");
   const trades = useQuery({
     queryKey: ["trades", tokenAddress],
     queryFn: () => api.trades(tokenAddress, "?limit=20"),
     refetchInterval: 15_000,
   });
-  return <section className="panel" aria-label="Indexed trade history">
-    <h2 className="text-xl font-semibold text-white">Indexed trades</h2>
-    <p className="mt-2 text-sm text-zinc-500">Confirmed curve events appear after the indexer reaches their finalized block.</p>
+  const visible = trades.data?.items.filter((trade) => tab === "recent" || (walletAddress && trade.trader.toLowerCase() === walletAddress.toLowerCase()));
+  return <section className="terminal-panel min-w-0" aria-label="Indexed trade history">
+    <div className="flex items-center justify-between gap-3 border-b border-white/8 p-4"><div className="flex rounded-lg border border-white/8 bg-black/20 p-0.5" role="group" aria-label="Trade history view"><button type="button" className={`min-h-9 rounded-md px-3 text-xs font-semibold ${tab === "recent" ? "bg-white/10 text-white" : "text-zinc-500"}`} aria-pressed={tab === "recent"} onClick={() => setTab("recent")}>Recent trades</button><button type="button" className={`min-h-9 rounded-md px-3 text-xs font-semibold ${tab === "yours" ? "bg-cyan-300/10 text-cyan-200" : "text-zinc-500"}`} aria-pressed={tab === "yours"} disabled={!walletAddress} onClick={() => setTab("yours")}>Your trades</button></div><span className="badge-neutral">Finalized</span></div>
+    <p className="px-4 pt-3 text-xs leading-5 text-zinc-600">The “Your trades” view filters the currently loaded recent records for the active wallet.</p>
     {trades.isPending && <p className="mt-5 text-sm text-zinc-400">Loading trade history…</p>}
     {trades.isError && <p className="mt-5 text-sm text-red-300">Trade history could not be loaded.</p>}
-    {trades.data?.items.length === 0 && <p className="mt-5 text-sm text-zinc-400">No indexed trades yet.</p>}
-    {trades.data && trades.data.items.length > 0 && <ul className="mt-5 grid gap-3">
-      {trades.data.items.map((trade) => <li className="rounded-xl border border-zinc-800 p-3 text-sm" key={`${trade.transaction_hash}:${trade.log_index}`}>
-        <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-amber-200"}>{trade.side.toUpperCase()}</span><span className="text-zinc-500">Block {trade.block_number}</span></div>
-        <p className="mt-2 text-zinc-300">{formatToken(trade.token_amount)} {symbol} · {formatNative(trade.reserve_amount)} ETH</p>
-        <a className="mt-2 block text-cyan-300" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan</a>
+    {visible?.length === 0 && <p className="m-4 text-sm text-zinc-400">{tab === "yours" ? "No trades from the active wallet are present in the recent indexed window." : "No indexed trades yet."}</p>}
+    {visible && visible.length > 0 && <ul className="grid max-h-[43rem] divide-y divide-white/6 overflow-y-auto">
+      {visible.map((trade) => <li className="p-4 text-sm transition-colors hover:bg-white/[0.02]" key={`${trade.transaction_hash}:${trade.log_index}`}>
+        <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">#{trade.block_number}</span></div>
+        <p className="mt-2 font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p>
+        <a className="mt-2 inline-block text-cyan-300 hover:text-cyan-200" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
       </li>)}
-    </ul>}
+    </ul>}{!reference && <p className="border-t border-white/8 px-4 py-3 text-xs text-zinc-600">USD unavailable · exact indexed ETH values remain visible.</p>}
   </section>;
-}
-
-function formatToken(value: string) {
-  try { return Number(formatUnits(BigInt(value), 18)).toLocaleString(undefined, { maximumFractionDigits: 6 }); } catch { return value; }
-}
-
-function formatNative(value: string) {
-  try { return Number(formatEther(BigInt(value))).toLocaleString(undefined, { maximumFractionDigits: 6 }); } catch { return value; }
 }

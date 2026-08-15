@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,19 +27,23 @@ type Handler struct {
 	timeout time.Duration
 	logger  *slog.Logger
 	objects ObjectStore
+	ethUSD  ETHUSDReader
 }
 
 func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger) http.Handler {
 	return NewHandlerWithObjectStore(repo, chainID, timeout, logger, nil)
 }
 func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger, objects ObjectStore) http.Handler {
+	return NewHandlerWithDependencies(repo, chainID, timeout, logger, objects, nil)
+}
+func NewHandlerWithDependencies(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger, objects ObjectStore, ethUSD ETHUSDReader) http.Handler {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger, objects: objects}
+	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger, objects: objects, ethUSD: ethUSD}
 	r := chi.NewRouter()
 	r.Use(requestID)
 	r.Use(localCORS)
@@ -48,6 +53,7 @@ func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Dura
 	r.Get("/readyz", h.ready)
 	r.Get("/objects/*", h.object)
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/prices/eth-usd", h.ethUSDPrice)
 		r.Post("/token-metadata", h.uploadMetadata)
 		r.Post("/token-metadata/{draft}/finalize", h.finalizeMetadata)
 		r.Get("/tokens", h.tokens)
@@ -63,6 +69,21 @@ func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Dura
 		r.Get("/creators/{address}/tokens", h.creatorTokens)
 	})
 	return r
+}
+
+func (h *Handler) ethUSDPrice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if h.ethUSD == nil {
+		writeError(w, http.StatusServiceUnavailable, "oracle_unavailable", "ETH/USD oracle is unavailable")
+		return
+	}
+	price, err := h.ethUSD.Read(r.Context())
+	if err != nil {
+		h.logger.Warn("ETH/USD oracle read failed", "request_id", requestIDFrom(r.Context()), "error", err)
+		writeError(w, http.StatusServiceUnavailable, "oracle_unavailable", "ETH/USD oracle is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, price)
 }
 func localCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +122,26 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	name, symbol := strings.TrimSpace(r.FormValue("name")), strings.TrimSpace(r.FormValue("symbol"))
 	description, supply := strings.TrimSpace(r.FormValue("description")), strings.TrimSpace(r.FormValue("initial_supply"))
+	websiteURL, urlError := optionalPublicURL(r.FormValue("website_url"), nil)
+	if urlError != nil {
+		writeError(w, 400, "invalid_website_url", "website URL must be a valid http or https URL")
+		return
+	}
+	xURL, urlError := optionalPublicURL(r.FormValue("x_url"), []string{"x.com", "twitter.com"})
+	if urlError != nil {
+		writeError(w, 400, "invalid_x_url", "X/Twitter URL must use x.com or twitter.com")
+		return
+	}
+	telegramURL, urlError := optionalPublicURL(r.FormValue("telegram_url"), []string{"t.me", "telegram.me"})
+	if urlError != nil {
+		writeError(w, 400, "invalid_telegram_url", "Telegram URL must use t.me or telegram.me")
+		return
+	}
+	discordURL, urlError := optionalPublicURL(r.FormValue("discord_url"), []string{"discord.gg", "discord.com"})
+	if urlError != nil {
+		writeError(w, 400, "invalid_discord_url", "Discord URL must use discord.gg or discord.com")
+		return
+	}
 	if len(name) == 0 || len([]byte(name)) > 64 {
 		writeError(w, 400, "invalid_name", "name must be between 1 and 64 bytes")
 		return
@@ -109,8 +150,8 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_symbol", "symbol must be between 1 and 16 bytes")
 		return
 	}
-	if len(description) == 0 || len([]byte(description)) > 1000 {
-		writeError(w, 400, "invalid_description", "description must be between 1 and 1000 bytes")
+	if len([]byte(description)) > 1000 {
+		writeError(w, 400, "invalid_description", "description must be at most 1000 bytes")
 		return
 	}
 	n, ok := new(big.Int).SetString(supply, 10)
@@ -159,7 +200,13 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 	metadataKey := filepath.ToSlash(filepath.Join("metadata", id+".json"))
 	imageURL := "/objects/" + imageKey
 	metadataURL := "/objects/" + metadataKey
-	metadata, _ := json.Marshal(map[string]string{"name": name, "symbol": symbol, "description": description, "image": imageURL})
+	metadataDocument := map[string]string{"name": name, "symbol": symbol, "image": imageURL}
+	for key, value := range map[string]string{"description": description, "website_url": websiteURL, "x_url": xURL, "telegram_url": telegramURL, "discord_url": discordURL} {
+		if value != "" {
+			metadataDocument[key] = value
+		}
+	}
+	metadata, _ := json.Marshal(metadataDocument)
 	if e = h.objects.Put(r.Context(), imageKey, bytes.NewReader(data)); e != nil {
 		h.internal(w, r, e)
 		return
@@ -168,7 +215,7 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, e)
 		return
 	}
-	draft := MetadataDraft{ID: id, Name: name, Symbol: symbol, InitialSupply: supply, Description: description, ImageURL: imageURL, MetadataURL: metadataURL}
+	draft := MetadataDraft{ID: id, Name: name, Symbol: symbol, InitialSupply: supply, Description: description, ImageURL: imageURL, MetadataURL: metadataURL, WebsiteURL: websiteURL, XURL: xURL, TelegramURL: telegramURL, DiscordURL: discordURL}
 	if e = h.repo.SaveMetadataDraft(r.Context(), draft); e != nil {
 		h.internal(w, r, e)
 		return
@@ -353,6 +400,14 @@ func (h *Handler) chart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_address", e.Error())
 		return
 	}
+	interval := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("interval")))
+	if interval == "" {
+		interval = "1h"
+	}
+	if _, ok := parseChartInterval(interval); !ok {
+		writeError(w, 400, "invalid_interval", "interval must be one of 1m, 5m, 15m, 1h, 4h, 1d, or 1w")
+		return
+	}
 	limit := 168
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		limit, e = strconv.Atoi(raw)
@@ -361,12 +416,40 @@ func (h *Handler) chart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, e := h.repo.Chart(r.Context(), h.chainID, a, limit)
+	out, e := h.repo.Chart(r.Context(), h.chainID, a, interval, limit)
 	if e != nil {
 		h.repositoryError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+func optionalPublicURL(raw string, allowedHosts []string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 2048 {
+		return "", errors.New("URL is too long")
+	}
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+		return "", errors.New("invalid public URL")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if len(allowedHosts) > 0 {
+		allowed := false
+		for _, candidate := range allowedHosts {
+			if host == candidate || strings.HasSuffix(host, "."+candidate) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return "", errors.New("unexpected URL host")
+		}
+	}
+	return parsed.String(), nil
 }
 func (h *Handler) creatorTokens(w http.ResponseWriter, r *http.Request) {
 	a, e := addressParam(r, "address")

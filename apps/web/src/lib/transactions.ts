@@ -4,7 +4,13 @@ export const idleTransaction: TransactionState = { status: "idle" };
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
-export type CreateTokenInput = { name: string; symbol: string; description: string; image: File | null };
+export type CreateTokenInput = { name: string; symbol: string; description: string; websiteUrl: string; xUrl: string; telegramUrl: string; discordUrl: string; image: File | null };
+
+const SOCIAL_HOSTS = {
+  xUrl: ["x.com", "twitter.com"],
+  telegramUrl: ["t.me", "telegram.me"],
+  discordUrl: ["discord.gg", "discord.com"],
+} as const;
 
 export function validateCreateToken(input: CreateTokenInput): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -13,11 +19,28 @@ export function validateCreateToken(input: CreateTokenInput): Record<string, str
   const description = input.description.trim();
   if (!name || new TextEncoder().encode(name).length > 64) errors.name = "Name must be between 1 and 64 bytes.";
   if (!symbol || new TextEncoder().encode(symbol).length > 16) errors.symbol = "Symbol must be between 1 and 16 bytes.";
-  if (!description || new TextEncoder().encode(description).length > 1000) errors.description = "Description must be between 1 and 1000 bytes.";
+  if (new TextEncoder().encode(description).length > 1000) errors.description = "About must be at most 1000 bytes.";
+  validateOptionalURL(input.websiteUrl, "websiteUrl", errors);
+  validateOptionalURL(input.xUrl, "xUrl", errors, SOCIAL_HOSTS.xUrl);
+  validateOptionalURL(input.telegramUrl, "telegramUrl", errors, SOCIAL_HOSTS.telegramUrl);
+  validateOptionalURL(input.discordUrl, "discordUrl", errors, SOCIAL_HOSTS.discordUrl);
   if (!input.image) errors.image = "Select a token image.";
   else if (!ACCEPTED_IMAGE_TYPES.includes(input.image.type as typeof ACCEPTED_IMAGE_TYPES[number])) errors.image = "Use PNG, JPEG, WebP, or GIF.";
   else if (input.image.size > MAX_IMAGE_BYTES) errors.image = "Image must be at most 5 MB.";
   return errors;
+}
+
+function validateOptionalURL(value: string, field: string, errors: Record<string, string>, allowedHosts?: readonly string[]) {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  try {
+    const parsed = new URL(trimmed);
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || !parsed.hostname || trimmed.length > 2048) throw new Error();
+    if (allowedHosts && !allowedHosts.some((host) => parsed.hostname.toLowerCase() === host || parsed.hostname.toLowerCase().endsWith(`.${host}`))) throw new Error();
+  } catch {
+    const label = field === "xUrl" ? "X/Twitter" : field === "telegramUrl" ? "Telegram" : field === "discordUrl" ? "Discord" : "Website";
+    errors[field] = `${label} must be a valid ${allowedHosts ? "matching " : ""}http or https URL.`;
+  }
 }
 
 export const canCreateToken = (chainId: number | undefined, authenticated: boolean, pending: boolean) => chainId === 84532 && authenticated && !pending;

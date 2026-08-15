@@ -20,8 +20,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Zonk.fun token launches",
-  description: "Permissionless token launches on Base.",
+  title: "Zonk.fun launch and trade community tokens",
+  description: "A non-custodial token launchpad on Base Sepolia.",
 };
 
 export default function RootLayout({ children }: RootLayoutProps) {
@@ -30,7 +30,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col"><AppProviders><Navigation />{children}</AppProviders></body>
+      <body className="flex min-h-full flex-col"><AppProviders><Navigation />{children}</AppProviders></body>
     </html>
   );
 }

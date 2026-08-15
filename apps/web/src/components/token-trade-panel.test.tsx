@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,7 +68,7 @@ function renderPanel(overrides: Partial<ComponentProps<typeof TokenTradePanel>> 
 async function requestBuyQuote(user: ReturnType<typeof userEvent.setup>, value = "0.01") {
   await user.type(screen.getByLabelText("ETH amount"), value);
   await user.click(screen.getByRole("button", { name: "Get quote" }));
-  await screen.findByText(/Exact token output/);
+  await screen.findByText("Token output");
 }
 
 async function requestSellQuote(user: ReturnType<typeof userEvent.setup>) {
@@ -83,6 +83,91 @@ function storePending(overrides: Partial<Parameters<typeof persistPendingTrade>[
 }
 
 describe("TokenTradePanel", () => {
+  it("separates desktop inputs from quote confirmation and prioritizes token output", async () => {
+    const user = userEvent.setup();
+    renderPanel({ tokenPriceWei: "1000000000" });
+    expect(screen.getByLabelText("Trade inputs and wallet")).toBeTruthy();
+    expect(screen.getByLabelText("Quote and confirmation")).toBeTruthy();
+    await requestBuyQuote(user);
+    expect(screen.getByText("Token output")).toBeTruthy();
+    expect(screen.getByText("1 ZONK")).toBeTruthy();
+    expect(screen.queryByText("Exact token output")).toBeNull();
+  });
+
+  it("debounces amount changes before requesting an automatic protected quote", async () => {
+    vi.useFakeTimers();
+    const { quoteBuy } = renderPanel();
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.0" } });
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.01" } });
+    expect(quoteBuy).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(499); });
+    expect(quoteBuy).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(quoteBuy).toHaveBeenCalledTimes(1);
+    expect(quoteBuy).toHaveBeenCalledWith(BigInt("10000000000000000"), 100);
+  });
+
+  it("automatically refreshes when side, wallet, or token identity changes", async () => {
+    vi.useFakeTimers();
+    const view = renderPanel();
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.01" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(view.quoteBuy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sell" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(view.quoteSell).toHaveBeenCalledTimes(1);
+
+    view.rerender(<TokenTradePanel authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(view.quoteBuy).toHaveBeenCalledTimes(2);
+
+    view.rerender(<TokenTradePanel authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={otherToken} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(view.quoteBuy).toHaveBeenCalledTimes(3);
+  });
+
+  it("ignores a stale automatic quote response after the amount changes", async () => {
+    vi.useFakeTimers();
+    let resolveFirst: ((quote: typeof buyQuote) => void) | undefined;
+    let resolveSecond: ((quote: typeof buyQuote) => void) | undefined;
+    const quoteBuy = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof buyQuote>((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise<typeof buyQuote>((resolve) => { resolveSecond = resolve; }));
+    renderPanel({ quoteBuy });
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.01" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.getByText(/Reading a protected quote/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.02" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    const latest = { ...buyQuote, tokenAmount: BigInt("2000000000000000000") };
+    await act(async () => { resolveSecond?.(latest); });
+    expect(screen.getByText("2 ZONK")).toBeTruthy();
+    await act(async () => { resolveFirst?.(buyQuote); });
+    expect(screen.queryByText("1 ZONK")).toBeNull();
+  });
+
+  it("shows an automatic quote error without fabricating a summary", async () => {
+    vi.useFakeTimers();
+    renderPanel({ quoteBuy: vi.fn().mockRejectedValue(new Error("Curve quote RPC unavailable")) });
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.01" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.getByText("Trade failed.")).toBeTruthy();
+    expect(screen.getByText("Curve quote RPC unavailable")).toBeTruthy();
+    expect(screen.queryByText("Quote summary")).toBeNull();
+  });
+
+  it("hides confirmation and clearly marks a quote when its TTL expires", async () => {
+    vi.useFakeTimers();
+    renderPanel();
+    fireEvent.change(screen.getByLabelText("ETH amount"), { target: { value: "0.01" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Get quote" })); });
+    expect(screen.getByRole("button", { name: "Confirm buy" })).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.getByText("This quote expired. Refresh it before submitting.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Confirm buy" })).toBeNull();
+  });
+
   it("prevents duplicate clicks throughout preparation and wallet confirmation", async () => {
     const user = userEvent.setup();
     const execute = vi.fn<TradeExecution>().mockImplementation(async (_quote, report) => {
@@ -227,7 +312,7 @@ describe("TokenTradePanel", () => {
     await requestBuyQuote(user);
     vi.setSystemTime(Date.now() + 60_001);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
-    expect(await screen.findByText(/quote expired/i)).toBeTruthy();
+    expect(await screen.findByText("This quote expired. Request a fresh quote before submitting.")).toBeTruthy();
     expect(execute).not.toHaveBeenCalled();
   });
 

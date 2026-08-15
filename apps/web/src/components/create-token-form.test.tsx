@@ -15,7 +15,7 @@ afterEach(cleanup);
 async function completeForm(user: ReturnType<typeof userEvent.setup>, file = image()) {
   await user.type(screen.getByLabelText("Name"), "Zonk");
   await user.type(screen.getByLabelText("Symbol"), "ZK");
-  await user.type(screen.getByLabelText("Description"), "A test token");
+  await user.type(screen.getByLabelText("About"), "A test token");
   await user.upload(screen.getByLabelText("Image"), file);
 }
 
@@ -46,13 +46,22 @@ describe("CreateTokenForm", () => {
     expect(screen.getByText(/at most 5 MB/)).toBeTruthy();
   });
 
+  it("validates optional social URLs", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await completeForm(user);
+    await user.type(screen.getByLabelText("X / Twitter URL"), "https://example.com/not-x");
+    await user.click(screen.getByRole("button", { name: "Review metadata" }));
+    expect(screen.getByText(/X\/Twitter must be/)).toBeTruthy();
+  });
+
   it("blocks creation on the wrong chain", async () => {
     const user = userEvent.setup();
     const { execute } = renderForm({ chainId: 1 });
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     expect(screen.getByText(/Wrong network/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Submit factory transaction" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Confirm factory transaction" }) as HTMLButtonElement).disabled).toBe(true);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -67,7 +76,7 @@ describe("CreateTokenForm", () => {
     renderForm({ execute, onSuccess });
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
-    await user.click(screen.getByRole("button", { name: "Submit factory transaction" }));
+    await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
     expect(await screen.findByText(/Confirm the transaction in Privy/)).toBeTruthy();
     expect(execute).toHaveBeenCalledTimes(1);
     finish?.({ tokenAddress: token, hash });
@@ -80,7 +89,7 @@ describe("CreateTokenForm", () => {
     renderForm({ execute: vi.fn<CreateExecution>().mockRejectedValue(new Error("User rejected the request")) });
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
-    await user.click(screen.getByRole("button", { name: "Submit factory transaction" }));
+    await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
     expect(await screen.findByText("Transaction rejected.")).toBeTruthy();
     expect(screen.getByText("User rejected the request")).toBeTruthy();
   });
@@ -94,7 +103,7 @@ describe("CreateTokenForm", () => {
     renderForm({ execute });
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
-    const submit = screen.getByRole("button", { name: "Submit factory transaction" });
+    const submit = screen.getByRole("button", { name: "Confirm factory transaction" });
     await user.dblClick(submit);
     expect(execute).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("button", { name: /Creation pending/ }) as HTMLButtonElement).disabled).toBe(true);

@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPostgresRepositoryRejectsUnpreparedSchema(t *testing.T) {
@@ -20,6 +22,108 @@ func TestPostgresRepositoryRejectsUnpreparedSchema(t *testing.T) {
 	if !strings.Contains(err.Error(), "db/migrate.sh") {
 		t.Fatalf("unexpected schema error: %v", err)
 	}
+}
+
+func TestPostgresChartAggregatesExactCanonicalTradesAtUTCBoundaries(t *testing.T) {
+	url := os.Getenv("API_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
+	}
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	const chain int64 = 84532
+	const token = "0x0000000000000000000000000000000000000c01"
+	const firstBlock int64 = 499999900
+	timestamps := []int64{
+		time.Date(2026, 8, 9, 23, 59, 59, 0, time.UTC).Unix(),
+		time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC).Unix(),
+		time.Date(2026, 8, 10, 0, 0, 30, 0, time.UTC).Unix(),
+		time.Date(2026, 8, 10, 0, 1, 0, 0, time.UTC).Unix(),
+	}
+	sides := []string{"buy", "buy", "buy", "sell"}
+	tokenAmounts := []string{"1000000000000000000", "2000000000000000000", "3000000000000000000", "1000000000000000000"}
+	curveValues := []string{"1000000000000000", "2000000000000000", "4000000000000000", "1000000000000000"}
+	blockHashes := make([]string, len(timestamps))
+	defer func() {
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM trades WHERE chain_id=$1 AND lower(token_address)=lower($2)`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM chain_blocks WHERE chain_id=$1 AND block_number BETWEEN $2 AND $3`, chain, firstBlock, firstBlock+int64(len(timestamps))-1)
+	}()
+	for i, timestamp := range timestamps {
+		blockHashes[i] = "0x" + strings.Repeat(string(rune('1'+i)), 64)
+		txHash := "0x" + strings.Repeat(string(rune('5'+i)), 64)
+		if _, err = repo.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,$2,$3,'0xparent',$4)`, chain, firstBlock+int64(i), blockHashes[i], timestamp); err != nil {
+			t.Fatal(err)
+		}
+		trader := "0x0000000000000000000000000000000000000c0" + string(rune('2'+i))
+		if _, err = repo.pool.Exec(ctx, `INSERT INTO trades(chain_id,token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,$6,0,0,$7,$8,$9,0)`, chain, token, trader, sides[i], tokenAmounts[i], curveValues[i], firstBlock+int64(i), blockHashes[i], txHash); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, interval := range supportedChartIntervals {
+		chart, chartErr := repo.Chart(ctx, chain, token, interval, 100)
+		if chartErr != nil || chart.Interval != interval || len(chart.SupportedIntervals) != len(supportedChartIntervals) || len(chart.Candles) == 0 {
+			t.Fatalf("interval=%s chart=%+v err=%v", interval, chart, chartErr)
+		}
+		spec, _ := parseChartInterval(interval)
+		for _, candle := range chart.Candles {
+			if spec.weekly {
+				if time.Unix(candle.BucketStart, 0).UTC().Weekday() != time.Monday || time.Unix(candle.BucketStart, 0).UTC().Hour() != 0 {
+					t.Fatalf("interval=%s bucket=%s is not Monday 00:00 UTC", interval, time.Unix(candle.BucketStart, 0).UTC())
+				}
+			} else if candle.BucketStart%spec.seconds != 0 {
+				t.Fatalf("interval=%s bucket=%d is not UTC aligned", interval, candle.BucketStart)
+			}
+		}
+	}
+
+	minute, err := repo.Chart(ctx, chain, token, "1m", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucketStart := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC).Unix()
+	var candle *ChartPoint
+	for i := range minute.Candles {
+		if minute.Candles[i].BucketStart == bucketStart {
+			candle = &minute.Candles[i]
+		}
+	}
+	if candle == nil {
+		t.Fatalf("missing 1m UTC boundary bucket: %+v", minute.Candles)
+	}
+	open := exactCurvePrice(t, "3000000000000000000", "3000000000000000")
+	closePrice := exactCurvePrice(t, "6000000000000000000", "7000000000000000")
+	if candle.TradeCount != 2 || candle.BuyCount != 2 || candle.SellCount != 0 || candle.Volume != "6000000000000000" || candle.UniqueTraderCount != 2 || candle.OpenPrice == nil || *candle.OpenPrice != open || candle.ClosePrice == nil || *candle.ClosePrice != closePrice || candle.HighPrice == nil || *candle.HighPrice != closePrice || candle.LowPrice == nil || *candle.LowPrice != open {
+		t.Fatalf("unexpected exact 1m OHLCV: %+v want open=%s close=%s", candle, open, closePrice)
+	}
+	weekly, err := repo.Chart(ctx, chain, token, "1w", 100)
+	if err != nil || len(weekly.Candles) != 2 || weekly.Candles[0].BucketStart != time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC).Unix() || weekly.Candles[1].BucketStart != time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("weekly UTC buckets=%+v err=%v", weekly.Candles, err)
+	}
+}
+
+func exactCurvePrice(t *testing.T, soldSupply, reserveBalance string) string {
+	t.Helper()
+	unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	virtual, ok := new(big.Int).SetString("1066666666666666666666666667", 10)
+	if !ok {
+		t.Fatal("invalid virtual supply fixture")
+	}
+	sold, _ := new(big.Int).SetString(soldSupply, 10)
+	reserve, _ := new(big.Int).SetString(reserveBalance, 10)
+	numerator := new(big.Int).Mul(new(big.Int).Add(unit, reserve), unit)
+	denominator := new(big.Int).Sub(virtual, sold)
+	quotient, remainder := new(big.Int), new(big.Int)
+	quotient.QuoRem(numerator, denominator, remainder)
+	if remainder.Sign() != 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	return quotient.String()
 }
 
 func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) {
@@ -50,7 +154,7 @@ func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) 
 	if _, err = repo.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,$2,$3,'0xparent',0)`, chain, block, blockHash); err != nil {
 		t.Fatal(err)
 	}
-	if err = repo.SaveMetadataDraft(ctx, MetadataDraft{ID: draftID, Name: "Zonk Live Test", Symbol: "ZLT", InitialSupply: "1000000000000000000000000000", Description: "live description", ImageURL: "/objects/live.png", MetadataURL: "/objects/live.json"}); err != nil {
+	if err = repo.SaveMetadataDraft(ctx, MetadataDraft{ID: draftID, Name: "Zonk Live Test", Symbol: "ZLT", InitialSupply: "1000000000000000000000000000", Description: "live description", ImageURL: "/objects/live.png", MetadataURL: "/objects/live.json", WebsiteURL: "https://zonk.fun", XURL: "https://x.com/zonk"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.FinalizeMetadata(ctx, chain, draftID, token, txHash); err != ErrNotFound {
@@ -72,7 +176,7 @@ func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) 
 	found := false
 	for _, item := range page.Items {
 		if strings.EqualFold(item.Address, token) {
-			found = item.Description == "live description"
+			found = item.Description == "live description" && item.WebsiteURL == "https://zonk.fun" && item.XURL == "https://x.com/zonk"
 		}
 	}
 	if !found {
@@ -275,12 +379,12 @@ func TestPostgresRepositoryKeysetPagination(t *testing.T) {
 	if e != nil || len(allActivity.Items) != 4 || !transferFound {
 		t.Fatalf("transfer activity=%+v err=%v", allActivity, e)
 	}
-	chart, e := repo.Chart(ctx, chain, addresses[0], 10)
-	if e != nil || len(chart.Items) != 2 || chart.Items[0].BucketStart != 3600 || chart.Items[1].OpenPrice == nil || *chart.Items[1].OpenPrice != "7" || chart.Items[1].HighPrice == nil || *chart.Items[1].HighPrice != "8" || chart.Items[1].LowPrice == nil || *chart.Items[1].LowPrice != "6" || chart.Items[1].ClosePrice == nil || *chart.Items[1].ClosePrice != "8" {
+	chart, e := repo.Chart(ctx, chain, addresses[0], "1h", 10)
+	if e != nil || len(chart.Candles) != 1 || chart.Candles[0].BucketStart != 0 || chart.Candles[0].TradeCount != 3 || chart.Candles[0].Volume != "33" || chart.Candles[0].OpenPrice == nil || chart.Candles[0].HighPrice == nil || chart.Candles[0].LowPrice == nil || chart.Candles[0].ClosePrice == nil {
 		t.Fatalf("chart=%+v err=%v", chart, e)
 	}
-	emptyChart, e := repo.Chart(ctx, chain, addresses[1], 10)
-	if e != nil || emptyChart.Items == nil || len(emptyChart.Items) != 0 {
+	emptyChart, e := repo.Chart(ctx, chain, addresses[1], "1m", 10)
+	if e != nil || emptyChart.Candles == nil || len(emptyChart.Candles) != 0 || emptyChart.Interval != "1m" || len(emptyChart.SupportedIntervals) != 7 {
 		t.Fatalf("empty chart=%+v err=%v", emptyChart, e)
 	}
 	creatorProfile, e := repo.Creator(ctx, chain, creator, 1, "")

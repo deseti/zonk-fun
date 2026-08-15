@@ -60,7 +60,7 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 	}
 	var ready bool
 	e = p.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8]
 		AND to_regclass('public.chain_events') IS NOT NULL
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.curves') IS NOT NULL`).Scan(&ready)
@@ -451,7 +451,7 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 			return fmt.Errorf("missing ERC-20 metadata for v3 token %s", u(v["token"]))
 		}
 		_, e := tx.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,protocol_version,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,'endpoint-cp-v3',$7,$8,$9,$10)
-			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,creator_address=excluded.creator_address,name=excluded.name,symbol=excluded.symbol,initial_supply=excluded.initial_supply,protocol_version='endpoint-cp-v3',description=NULL,image_url=NULL,metadata_url=NULL,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["creator"]), m.Name, m.Symbol, u(v["totalSupply"]), l.BlockNumber, b, t, i)
+			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,creator_address=excluded.creator_address,name=excluded.name,symbol=excluded.symbol,initial_supply=excluded.initial_supply,protocol_version='endpoint-cp-v3',description=NULL,image_url=NULL,metadata_url=NULL,website_url=NULL,x_url=NULL,telegram_url=NULL,discord_url=NULL,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["creator"]), m.Name, m.Symbol, u(v["totalSupply"]), l.BlockNumber, b, t, i)
 		if e != nil {
 			return e
 		}

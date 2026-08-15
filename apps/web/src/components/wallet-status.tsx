@@ -27,7 +27,7 @@ export async function switchPrivyEmbeddedWallet(
   return getClientForChain({ id: baseSepolia.id });
 }
 
-export function WalletStatus() {
+export function WalletStatus({ compact = false }: { compact?: boolean }) {
   const { ready, authenticated, user, logout, error } = usePrivy();
   const { wallets } = useWallets();
   const { client, getClientForChain } = useSmartWallets();
@@ -77,21 +77,21 @@ export function WalletStatus() {
     error,
   });
 
-  if (!authenticated) return <div className="flex items-center gap-2">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className="button-primary" onClick={runLogin}>Log in: wallet, email, or social</button></div>;
+  if (!authenticated) return <div className={`flex items-center gap-2 ${compact ? "flex-wrap" : ""}`} aria-live="polite">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className={`button-primary ${compact ? "w-full" : ""}`} disabled={loginPending} onClick={runLogin}>{loginPending ? "Opening Privy…" : "Log in: wallet, email, or social"}</button></div>;
 
   const activeChainId = mode === "external" ? parsePrivyChainId(external?.chainId) : chainId;
 
-  return <div className="flex flex-wrap items-center gap-2" aria-label="Privy account controls">
-    <span className="text-xs text-white">Active: {walletModeLabel(mode)} {short(activeAddress)}</span>
+  return <div className={`flex min-w-0 flex-wrap items-center gap-2 ${compact ? "w-full" : "justify-end"}`} aria-label="Privy account controls" aria-live="polite">
+    <span className={`min-w-0 text-xs text-white ${compact ? "w-full rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2" : ""}`}><span className="text-zinc-500">Active:</span> {walletModeLabel(mode)} <span className="font-mono text-cyan-200">{short(activeAddress)}</span></span>
     {embeddedAddress && <button className={mode === "embedded" ? "button-primary" : "button-secondary"} aria-pressed={mode === "embedded"} onClick={() => selectMode("embedded")}>Embedded {short(embeddedAddress)}</button>}
     {externalAddress ? <button className={mode === "external" ? "button-primary" : "button-secondary"} aria-pressed={mode === "external"} onClick={() => selectMode("external")}>External {short(externalAddress)}</button> : <button className="button-secondary" onClick={runConnectExternal}>Connect external wallet</button>}
-    {actionError && <span className="text-xs text-red-300">{actionError}</span>}
+    {actionError && <span className={`${compact ? "w-full" : ""} text-xs text-red-300`}>{actionError}</span>}
     {!ready && <span className="text-sm text-zinc-400">Privy loading…</span>}
     {ready && error && <span className="text-sm text-red-300">Privy is unavailable</span>}
     {ready && !error && activeChainId !== baseSepolia.id && <><span className="badge-warning">Wrong network</span><button className="button-secondary" disabled={!(mode === "external" ? external : embedded) || switchPending} onClick={() => void switchNetwork()}>{switchPending ? "Switching…" : "Use Base Sepolia"}</button></>}
     {ready && !error && (state === "logged_in_without_embedded_wallet" || state === "embedded_wallet_creating") && <button className="button-secondary" disabled={createPending} onClick={() => void runCreateWallet()}>{createPending ? "Creating wallet…" : "Create embedded wallet"}</button>}
     {ready && !error && activeChainId === baseSepolia.id && <span className="badge-success">Base Sepolia</span>}
-    <button className="button-secondary" onClick={() => void runLogout()}>Log out</button>
+    <button className={compact ? "button-ghost" : "button-secondary"} onClick={() => void runLogout()}>Log out</button>
   </div>;
 }
 

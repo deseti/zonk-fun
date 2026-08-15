@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { formatEther, formatUnits, parseEther, parseUnits, type Address, type Hash } from "viem";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { parseEther, parseUnits, type Address, type Hash } from "viem";
 import type { BudgetBuyQuote, CurveTradeState, ProtectedSellQuote, TradeConfirmation } from "@/lib/contracts";
+import { formatNative, formatTokenAmount, formatWeiUsd, type EthUsdReference } from "@/lib/format";
+import { useOraclePrice } from "@/providers/oracle-price-provider";
 import {
   clearPendingTrade,
   persistPendingTrade,
@@ -33,6 +35,7 @@ type Props = {
   walletAddress?: Address;
   tokenAddress: Address;
   symbol: string;
+  tokenPriceWei?: string | null;
   state?: CurveTradeState;
   statePending: boolean;
   stateError?: string;
@@ -45,9 +48,11 @@ type Props = {
 };
 
 const QUOTE_TTL_MS = 60_000;
+const QUOTE_DEBOUNCE_MS = 500;
 const blockingStatuses: TradeTransactionStatus[] = ["preparing", "awaiting_approval", "approval_confirming", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown"];
 
 export function TokenTradePanel(props: Props) {
+  const { reference } = useOraclePrice();
   const [initialRecovery] = useState(() => props.walletAddress ? readPendingTrade(props.tokenAddress, props.walletAddress) : null);
   const [side, setSide] = useState<TradeSide>(initialRecovery?.side ?? "buy");
   const [amount, setAmount] = useState("");
@@ -65,6 +70,8 @@ export function TokenTradePanel(props: Props) {
   const submittedHashRef = useRef<Hash | undefined>(initialRecovery?.hash);
   const submittedAtRef = useRef<number | undefined>(initialRecovery?.submittedAt);
   const generationRef = useRef(0);
+  const quoteRequestRef = useRef(0);
+  const quoteDebounceRef = useRef(0);
   const identity = tradeIdentity(props.tokenAddress, props.walletAddress);
   const stateFingerprint = tradeStateFingerprint(props.state, side);
   const latestRef = useRef({ identity, chainId: props.chainId, stateFingerprint });
@@ -72,15 +79,55 @@ export function TokenTradePanel(props: Props) {
     latestRef.current = { identity, chainId: props.chainId, stateFingerprint };
   }, [identity, props.chainId, stateFingerprint]);
   const quoteStateChanged = Boolean(quoteRecord && quoteRecord.stateFingerprint !== stateFingerprint);
-  const quote = quoteStateChanged ? null : quoteRecord?.quote ?? null;
+  const quote = quoteStateChanged || quoteStale ? null : quoteRecord?.quote ?? null;
   const locked = blockingStatuses.includes(status);
   const canBuy = props.state?.lifecycle === 0;
   const canSell = props.state?.lifecycle === 0 || props.state?.lifecycle === 1;
   const sideAllowed = side === "buy" ? canBuy : canSell;
+  const chainID = props.chainId;
+  const quoteBuy = props.quoteBuy;
+  const quoteSell = props.quoteSell;
+  const tokenDecimals = props.state?.decimals ?? 18;
+  const tokenLifecycle = props.state?.lifecycle;
+  const tokenSymbol = props.symbol;
+  const unavailable = Boolean(props.walletAddress) && !props.statePending && !props.stateError && (!props.state || !sideAllowed);
+  const controlsUnavailable = unavailable || props.statePending || Boolean(props.stateError) || locked;
+  const guard = !props.authenticated
+    ? "Log in with Privy to trade."
+    : !props.walletAddress
+      ? props.walletMode === "external" ? "The selected external wallet is not connected." : "Waiting for the Privy smart wallet."
+      : props.chainId !== 84532
+        ? "Wrong network. Use Base Sepolia (84532)."
+        : null;
+
+  const previousIdentityRef = useRef(identity);
+  useEffect(() => {
+    if (previousIdentityRef.current === identity) return;
+    previousIdentityRef.current = identity;
+    generationRef.current += 1;
+    quoteRequestRef.current += 1;
+    quoteDebounceRef.current += 1;
+    operationRef.current = false;
+    walletInteractionRef.current = false;
+    approvalHashRef.current = undefined;
+    submittedHashRef.current = undefined;
+    submittedAtRef.current = undefined;
+    const pending = props.walletAddress ? readPendingTrade(props.tokenAddress, props.walletAddress) : null;
+    recoveryRef.current = pending?.recovery;
+    submittedHashRef.current = pending?.hash;
+    submittedAtRef.current = pending?.submittedAt;
+    setSide(pending?.side ?? "buy");
+    setQuoteRecord(null);
+    setQuoteStale(false);
+    setQuoteLoading(false);
+    setStatus(pending ? "confirmation_unknown" : "idle");
+    setHash(pending?.hash);
+    setError(pending ? "A submitted transaction still needs a definitive receipt before another trade is allowed." : "");
+  }, [identity, props.tokenAddress, props.walletAddress]);
 
   useEffect(() => {
     if (!quoteRecord) return;
-    const remaining = QUOTE_TTL_MS - (Date.now() - quoteRecord.createdAt);
+    const remaining = quoteExpiresAt(quoteRecord) - Date.now();
     if (remaining <= 0) {
       const timeout = window.setTimeout(() => setQuoteStale(true), 0);
       return () => window.clearTimeout(timeout);
@@ -131,7 +178,8 @@ export function TokenTradePanel(props: Props) {
     }
   };
 
-  const getQuote = async () => {
+  const getQuote = useCallback(async () => {
+    const requestID = ++quoteRequestRef.current;
     setError("");
     setQuoteRecord(null);
     setQuoteStale(false);
@@ -143,28 +191,40 @@ export function TokenTradePanel(props: Props) {
       return;
     }
     if (!sideAllowed) {
-      setError(side === "buy" && props.state?.lifecycle === 1 ? "New buys are paused while graduation is pending. Selling remains available." : "This trade is unavailable for the current curve lifecycle.");
+      setError(side === "buy" && tokenLifecycle === 1 ? "New buys are paused while graduation is pending. Selling remains available." : "This trade is unavailable for the current curve lifecycle.");
       return;
     }
     const requestedIdentity = identity;
     const requestedState = stateFingerprint;
-    const requestedChain = props.chainId;
+    const requestedChain = chainID;
+    setStatus("idle");
     setQuoteLoading(true);
     try {
       const next = side === "buy"
-        ? { side, ...await props.quoteBuy(parsePositiveAmount(amount, 18, "ETH"), slippageBps) } as Quote
-        : { side, ...await props.quoteSell(parsePositiveAmount(amount, props.state?.decimals ?? 18, props.symbol), slippageBps) } as Quote;
+        ? { side, ...await quoteBuy(parsePositiveAmount(amount, 18, "ETH"), slippageBps) } as Quote
+        : { side, ...await quoteSell(parsePositiveAmount(amount, tokenDecimals, tokenSymbol), slippageBps) } as Quote;
+      if (quoteRequestRef.current !== requestID) return;
       if (latestRef.current.identity !== requestedIdentity || latestRef.current.stateFingerprint !== requestedState || latestRef.current.chainId !== requestedChain || requestedChain !== 84532) {
-        throw new Error("Wallet, network, token, or curve state changed while quoting. Request a fresh quote.");
+        return;
       }
       setQuoteRecord({ quote: next, createdAt: Date.now(), identity: requestedIdentity, stateFingerprint: requestedState, chainId: requestedChain });
     } catch (reason) {
+      if (quoteRequestRef.current !== requestID) return;
       setStatus("failed");
       setError(safeMessage(reason));
     } finally {
-      setQuoteLoading(false);
+      if (quoteRequestRef.current === requestID) setQuoteLoading(false);
     }
-  };
+  }, [amount, chainID, identity, quoteBuy, quoteSell, side, sideAllowed, slippage, stateFingerprint, tokenDecimals, tokenLifecycle, tokenSymbol]);
+
+  useEffect(() => {
+    const debounceID = ++quoteDebounceRef.current;
+    if (status !== "idle" || controlsUnavailable || guard || !sideAllowed || !quoteInputIsValid(amount, side === "buy" ? 18 : props.state?.decimals ?? 18, side === "buy" ? "ETH" : props.symbol, slippage)) return;
+    const timeout = window.setTimeout(() => {
+      if (quoteDebounceRef.current === debounceID) void getQuote();
+    }, QUOTE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [amount, controlsUnavailable, getQuote, guard, identity, props.state?.decimals, props.symbol, side, sideAllowed, slippage, stateFingerprint, status]);
 
   const submit = async () => {
     if (operationRef.current || locked || !quoteRecord) return;
@@ -190,7 +250,7 @@ export function TokenTradePanel(props: Props) {
       setError("Another tab or prior session has an unresolved transaction for this wallet and token. New trades remain blocked.");
       return;
     }
-    if (quoteStale || Date.now() - quoteRecord.createdAt >= QUOTE_TTL_MS) {
+    if (quoteStale || Date.now() >= quoteExpiresAt(quoteRecord)) {
       setStatus("failed");
       setQuoteRecord(null);
       setQuoteStale(true);
@@ -245,7 +305,7 @@ export function TokenTradePanel(props: Props) {
       }
     };
     const assertSubmissionReady = () => {
-      if (Date.now() - quoteRecord.createdAt >= QUOTE_TTL_MS || BigInt(Math.floor(Date.now() / 1000)) >= currentQuote.deadline) {
+      if (Date.now() >= quoteExpiresAt(quoteRecord)) {
         throw new Error("This quote expired during wallet approval. Request a fresh quote before submitting.");
       }
       if (latestRef.current.identity !== operationIdentity || latestRef.current.chainId !== 84532 || latestRef.current.stateFingerprint !== quoteRecord.stateFingerprint) {
@@ -335,76 +395,110 @@ export function TokenTradePanel(props: Props) {
     setQuoteRecord(null);
   };
 
-  const changeAmount = (value: string) => { setAmount(value); setQuoteRecord(null); setQuoteStale(false); setError(""); };
-  const changeSlippage = (value: string) => { setSlippage(value); setQuoteRecord(null); setQuoteStale(false); setError(""); };
-  const changeSide = (value: TradeSide) => { if (locked) return; setSide(value); setQuoteRecord(null); setQuoteStale(false); setError(""); setStatus("idle"); setHash(undefined); };
+  const invalidateQuote = () => {
+    quoteRequestRef.current += 1;
+    quoteDebounceRef.current += 1;
+    setQuoteRecord(null);
+    setQuoteStale(false);
+    setQuoteLoading(false);
+    setError("");
+    setStatus("idle");
+  };
+  const changeAmount = (value: string) => { setAmount(value); invalidateQuote(); };
+  const changeSlippage = (value: string) => { setSlippage(value); invalidateQuote(); };
+  const changeSide = (value: TradeSide) => { if (locked) return; setSide(value); invalidateQuote(); setHash(undefined); };
+  const refreshQuote = () => { quoteDebounceRef.current += 1; void getQuote(); };
+  const tokenBalanceValue = props.state && props.tokenPriceWei ? tokenValueWei(props.state.tokenBalance, props.state.decimals, props.tokenPriceWei) : null;
+  const quotedTokenValue = quote && props.tokenPriceWei ? tokenValueWei(quote.tokenAmount, props.state?.decimals ?? 18, props.tokenPriceWei) : null;
+  const quotedTokenEstimate = tokenUsdEstimate(quotedTokenValue, reference);
+  const inputUsd = side === "buy" ? inputEthUsd(amount, reference) : "—";
 
-  const unavailable = Boolean(props.walletAddress) && !props.statePending && !props.stateError && (!props.state || !sideAllowed);
-  const controlsUnavailable = unavailable || props.statePending || Boolean(props.stateError) || locked;
-  const guard = !props.authenticated
-    ? "Log in with Privy to trade."
-    : !props.walletAddress
-      ? props.walletMode === "external" ? "The selected external wallet is not connected." : "Waiting for the Privy smart wallet."
-      : props.chainId !== 84532
-        ? "Wrong network. Use Base Sepolia (84532)."
-        : null;
-
-  return <section className="panel" aria-label="Buy and sell">
-    <p className="text-xs text-zinc-400">Active signer: <span className="text-white">{props.walletMode === "external" ? "External wallet" : "Privy embedded smart wallet"}</span>{props.walletAddress ? ` · ${props.walletAddress}` : ""}</p>
-    <div className="flex gap-2">
-      <button className={side === "buy" ? "button-primary" : "button-secondary"} type="button" disabled={locked || quoteLoading} onClick={() => changeSide("buy")}>Buy</button>
-      <button className={side === "sell" ? "button-primary" : "button-secondary"} type="button" disabled={locked || quoteLoading} onClick={() => changeSide("sell")}>Sell</button>
+  return <section className="terminal-panel p-4" aria-label="Buy and sell">
+    <div className="trade-panel-grid grid min-w-0 gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(18rem,1.05fr)]">
+      <div className="min-w-0" aria-label="Trade inputs and wallet">
+        <div className="flex rounded-xl border border-white/8 bg-black/20 p-1" role="group" aria-label="Trade side">
+          <button className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold transition-colors ${side === "buy" ? "bg-emerald-400 text-[#03251a] shadow-lg shadow-emerald-950/20" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`} aria-pressed={side === "buy"} type="button" disabled={locked} onClick={() => changeSide("buy")}>Buy</button>
+          <button className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold transition-colors ${side === "sell" ? "bg-red-500 text-white shadow-lg shadow-red-950/25" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`} aria-pressed={side === "sell"} type="button" disabled={locked} onClick={() => changeSide("sell")}>Sell</button>
+        </div>
+        <div className="mt-5 flex items-start justify-between gap-3"><div><p className="text-xs text-zinc-500">Protected curve order</p><h3 className="mt-1 text-xl font-semibold text-white">{side === "buy" ? `Buy ${props.symbol}` : `Sell ${props.symbol}`}</h3></div><span className="badge-neutral">60s quote</span></div>
+        <div className="mt-4 rounded-xl border border-white/8 bg-black/15 p-3"><p className="text-xs text-zinc-500">Active signer · <span className="text-zinc-200">{props.walletMode === "external" ? "External wallet" : "Privy embedded smart wallet"}</span></p>{props.walletAddress && <p className="address mt-1">{props.walletAddress}</p>}</div>
+        {guard && <p className="status-box status-warning mt-4">{guard}</p>}
+        {props.statePending && <p className="status-box mt-4 text-zinc-400">Loading balances and curve state…</p>}
+        {props.stateError && <p className="status-box status-error mt-4">{props.stateError}</p>}
+        {props.state?.lifecycle === 1 && <p className="status-box status-warning mt-4">Graduation is pending. New buys are paused, but holders may still sell.</p>}
+        {unavailable && <p className="status-box status-warning mt-4">{side === "buy" && props.state?.lifecycle === 1 ? "Buying is unavailable while graduation is pending. Select Sell to exit." : "This trade is unavailable for the current Zonk curve lifecycle."}</p>}
+        {props.state && <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div className="panel-subtle p-3"><dt className="text-xs text-zinc-500">ETH balance</dt><dd className="mt-1 truncate font-medium text-zinc-100">{formatWeiUsd(props.state.nativeBalance, reference)}</dd><dd className="mt-0.5 truncate text-[0.68rem] text-zinc-600" title={formatNative(props.state.nativeBalance)}>{formatNative(props.state.nativeBalance)}</dd></div>
+          <div className="panel-subtle p-3"><dt className="truncate text-xs text-zinc-500">{props.symbol} balance</dt><dd className="mt-1 truncate font-medium text-zinc-100">{formatWeiUsd(tokenBalanceValue, reference)}</dd><dd className="mt-0.5 truncate text-[0.68rem] text-zinc-600" title={formatTokenAmount(props.state.tokenBalance, props.state.decimals, props.symbol)}>{formatTokenAmount(props.state.tokenBalance, props.state.decimals, props.symbol)}</dd></div>
+        </dl>}
+        <div className="mt-5 grid gap-4">
+          <label className="grid gap-2 text-sm text-zinc-300"><span className="flex items-center justify-between gap-3"><span className="font-medium text-zinc-200">{side === "buy" ? "Pay amount" : "Sell amount"}</span><span className="text-xs text-zinc-600">{side === "buy" ? inputUsd : quotedTokenEstimate}</span></span><div className="relative"><input className="pr-16" aria-label={side === "buy" ? "ETH amount" : `${props.symbol} amount`} inputMode="decimal" value={amount} placeholder="0.0" disabled={controlsUnavailable} onChange={(event) => changeAmount(event.target.value)} /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-500">{side === "buy" ? "ETH" : props.symbol}</span></div></label>
+          <label className="grid gap-2 text-sm text-zinc-300"><span className="flex items-center justify-between gap-3"><span className="font-medium text-zinc-200">Slippage tolerance</span><span className="text-xs text-zinc-500">0–50%</span></span><div className="relative"><input className="pr-12" aria-label="Slippage tolerance" inputMode="decimal" value={slippage} disabled={controlsUnavailable} onChange={(event) => changeSlippage(event.target.value)} /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500">%</span></div></label>
+          <button className="button-secondary w-full" type="button" aria-label="Get quote" disabled={quoteLoading || controlsUnavailable || Boolean(guard)} onClick={refreshQuote}>{quoteLoading ? "Refreshing protected quote…" : quoteRecord ? "Refresh protected quote" : "Get protected quote"}</button>
+          {quoteLoading && <p className="text-center text-xs text-zinc-500" aria-live="polite">Reading a protected quote from the curve…</p>}
+        </div>
+      </div>
+      <div className="min-w-0 border-t border-white/8 pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0" aria-label="Quote and confirmation">
+        {quote ? <div className="rounded-xl border border-cyan-300/18 bg-cyan-300/[0.025] p-4 text-sm">
+          <div className="mb-4 flex items-center justify-between gap-3"><div><p className="font-semibold text-white">Quote summary</p><p className="mt-1 text-xs text-zinc-600">{reference ? `Chainlink USD · updated ${new Date(reference.asOf).toLocaleString()}` : "USD unavailable · execution remains ETH-denominated"}</p></div><span className="badge-success">Ready</span></div>
+          {quote.side === "buy" ? <>
+            <QuoteRow label="Pay" value={formatWeiUsd(quote.reserveIn, reference)} secondary={formatNative(quote.reserveIn)} strong />
+            <QuoteRow label="Token output" value={formatTokenAmount(quote.tokenAmount, props.state?.decimals ?? 18, props.symbol)} secondary={quotedTokenEstimate} strong />
+            <QuoteRow label="Maximum input" value={formatWeiUsd(quote.maxReserveIn, reference)} secondary={formatNative(quote.maxReserveIn)} />
+            <p className="mt-3 text-xs leading-5 text-zinc-500">This contract buys an exact token output; any unused maximum ETH is refunded.</p>
+          </> : <>
+            <QuoteRow label="Token input" value={formatTokenAmount(quote.tokenAmount, props.state?.decimals ?? 18, props.symbol)} secondary={quotedTokenEstimate} strong />
+            <QuoteRow label="Receive" value={formatWeiUsd(quote.reserveOut, reference)} secondary={formatNative(quote.reserveOut)} strong />
+            <QuoteRow label="Minimum ETH output" value={formatWeiUsd(quote.minReserveOut, reference)} secondary={formatNative(quote.minReserveOut)} />
+            {props.state && props.state.allowance < quote.tokenAmount && <p className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/[0.035] p-3 text-xs leading-5 text-zinc-400">{props.walletMode === "embedded" ? "Token approval and sale will be submitted atomically by the smart wallet." : "Your external wallet will request an approval transaction first. Zonk.fun waits for its receipt before requesting the sell transaction."}</p>}
+          </>}
+          <div className="my-4 border-t border-white/8" /><QuoteRow label="Protocol fee" value={formatWeiUsd(quote.protocolFee, reference)} secondary={formatNative(quote.protocolFee)} /><QuoteRow label="Creator fee" value={formatWeiUsd(quote.creatorFee, reference)} secondary={formatNative(quote.creatorFee)} /><QuoteRow label="Slippage protection" value={`${(quote.slippageBps / 100).toFixed(2)}%`} /><QuoteRow label="Price impact" value="Unavailable" /><QuoteRow label="Quote expiry" value={formatDeadline(quote.deadline)} />
+          <p className="mt-3 text-xs leading-5 text-zinc-500">Quote expires after 60 seconds. Execution uses the exact displayed maximum input or minimum output and deadline.</p>
+          <button className="button-primary mt-4 w-full" type="button" disabled={locked || Boolean(guard)} onClick={() => void submit()}>{locked ? "Trade locked…" : `Confirm ${quote.side}`}</button>
+        </div> : <div className={`panel-subtle p-4 text-sm leading-6 ${quoteStale || quoteStateChanged ? "text-amber-200" : "text-zinc-500"}`}><p className="font-medium text-zinc-200">Protected quote</p><p className="mt-2">{quoteLoading ? "Refreshing from the active Zonk curve…" : quoteStale ? "This quote expired. Refresh it before submitting." : quoteStateChanged ? "Curve state or balances changed. Waiting for a fresh quote." : "Enter an amount to load contract-backed output, fees, protection, and expiry."}</p></div>}
+        {status !== "idle" && <div className={`status-box mt-5 ${status === "confirmed" ? "status-success" : ["failed", "reverted", "replaced"].includes(status) ? "status-error" : status === "confirmation_unknown" ? "status-warning" : ""}`} aria-live="polite" role="status">
+          <div className="flex items-start gap-3"><span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${locked && status !== "confirmation_unknown" ? "animate-pulse bg-cyan-300" : status === "confirmed" ? "bg-emerald-300" : ["failed", "reverted", "replaced"].includes(status) ? "bg-rose-300" : "bg-amber-300"}`} /><p className="font-medium">{tradeStatusLabel(status)}</p></div>
+          {hash && <a className="mt-2 block break-all text-cyan-300" href={`https://sepolia.basescan.org/tx/${hash}`} target="_blank" rel="noreferrer">View Explorer</a>}
+          {(error || quoteStateChanged) && <p className="mt-2 text-sm text-red-200">{error || "Curve state or balances changed. Request a fresh quote."}</p>}
+          {status === "confirmed" && <p className="mt-2 text-zinc-400">The trade is confirmed. Balances and indexed views are being refreshed.</p>}
+          {status === "confirmation_unknown" && <div className="mt-3 flex flex-wrap gap-2">{hash && <button className="button-secondary" type="button" onClick={() => void recover("check")}>Check Again</button>}{hash && <button className="button-secondary" type="button" onClick={() => void recover("resume")}>Resume Confirmation</button>}<button className="button-secondary border-red-400/40 text-red-200" type="button" onClick={abandon}>Abandon Pending Trade</button></div>}
+        </div>}
+      </div>
     </div>
-    <h2 className="mt-5 text-xl font-semibold text-white">{side === "buy" ? `Buy ${props.symbol}` : `Sell ${props.symbol}`}</h2>
-    {guard && <p className="mt-3 text-sm text-amber-200">{guard}</p>}
-    {props.statePending && <p className="mt-3 text-sm text-zinc-400">Loading balances and curve state…</p>}
-    {props.stateError && <p className="mt-3 text-sm text-red-300">{props.stateError}</p>}
-    {props.state?.lifecycle === 1 && <p className="mt-3 text-sm text-amber-200">Graduation is pending. New buys are paused, but holders may still sell.</p>}
-    {quoteStateChanged && status === "idle" && <p className="mt-3 text-sm text-red-300">Curve state or balances changed. Request a fresh quote.</p>}
-    {unavailable && <p className="mt-3 text-sm text-amber-200">{side === "buy" && props.state?.lifecycle === 1 ? "Buying is unavailable while graduation is pending. Select Sell to exit." : "This trade is unavailable for the current Zonk curve lifecycle."}</p>}
-    {props.state && <div className="mt-4 grid gap-2 text-sm text-zinc-400 sm:grid-cols-2">
-      <p>ETH balance: <span className="text-zinc-200">{formatAmount(props.state.nativeBalance, 18)}</span></p>
-      <p>{props.symbol} balance: <span className="text-zinc-200">{formatAmount(props.state.tokenBalance, props.state.decimals)}</span></p>
-    </div>}
-    <div className="mt-5 grid gap-4">
-      <label className="grid gap-1 text-sm text-zinc-300">
-        <span>{side === "buy" ? "ETH amount" : `${props.symbol} amount`}</span>
-        <input aria-label={side === "buy" ? "ETH amount" : `${props.symbol} amount`} inputMode="decimal" value={amount} disabled={quoteLoading || controlsUnavailable} onChange={(event) => changeAmount(event.target.value)} />
-      </label>
-      <label className="grid gap-1 text-sm text-zinc-300">
-        <span>Slippage tolerance (%)</span>
-        <input aria-label="Slippage tolerance" inputMode="decimal" value={slippage} disabled={quoteLoading || controlsUnavailable} onChange={(event) => changeSlippage(event.target.value)} />
-      </label>
-      <button className="button-secondary w-fit" type="button" disabled={quoteLoading || controlsUnavailable || Boolean(guard)} onClick={() => void getQuote()}>{quoteLoading ? "Requesting contract quote…" : "Get quote"}</button>
-    </div>
-    {quote && <div className="mt-5 rounded-xl border border-zinc-700 p-4 text-sm">
-      {quote.side === "buy" ? <>
-        <p>Exact token output: <span className="text-white">{formatAmount(quote.tokenAmount, props.state?.decimals ?? 18)} {props.symbol}</span></p>
-        <p className="mt-2">Current contract quote: <span className="text-white">{formatAmount(quote.reserveIn, 18)} ETH</span></p>
-        <p className="mt-2">Maximum ETH input: <span className="text-white">{formatAmount(quote.maxReserveIn, 18)} ETH</span></p>
-        <p className="mt-2 text-zinc-500">This contract buys an exact token output; any unused maximum ETH is refunded.</p>
-      </> : <>
-        <p>Expected ETH output: <span className="text-white">{formatAmount(quote.reserveOut, 18)} ETH</span></p>
-        <p className="mt-2">Minimum ETH output: <span className="text-white">{formatAmount(quote.minReserveOut, 18)} ETH</span></p>
-        {props.state && props.state.allowance < quote.tokenAmount && <p className="mt-2 text-zinc-500">{props.walletMode === "embedded" ? "Token approval and sale will be submitted atomically by the smart wallet." : "Your external wallet will request an approval transaction first. Zonk.fun waits for its receipt before requesting the sell transaction."}</p>}
-      </>}
-      <p className="mt-2">Protocol fee: {formatAmount(quote.protocolFee, 18)} ETH · Creator fee: {formatAmount(quote.creatorFee, 18)} ETH</p>
-      <p className="mt-2">Slippage protection: {(quote.slippageBps / 100).toFixed(2)}% · Deadline: {formatDeadline(quote.deadline)}</p>
-      <p className="mt-2 text-zinc-500">Quote expires after 60 seconds. Execution uses the exact displayed maximum input or minimum output and deadline.</p>
-      <button className="button-primary mt-4" type="button" disabled={locked || Boolean(guard)} onClick={() => void submit()}>{locked ? "Trade locked…" : `Confirm ${quote.side}`}</button>
-    </div>}
-    {status !== "idle" && <div className="mt-5 text-sm" aria-live="polite">
-      <p>{tradeStatusLabel(status)}</p>
-      {hash && <a className="mt-2 block break-all text-cyan-300" href={`https://sepolia.basescan.org/tx/${hash}`} target="_blank" rel="noreferrer">View Explorer</a>}
-      {(error || quoteStateChanged) && <p className="mt-2 text-red-300">{error || "Curve state or balances changed. Request a fresh quote."}</p>}
-      {status === "confirmed" && <p className="mt-2 text-zinc-400">The trade is confirmed. Balances and indexed views are being refreshed.</p>}
-      {status === "confirmation_unknown" && <div className="mt-3 flex flex-wrap gap-2">
-        {hash && <button className="button-secondary" type="button" onClick={() => void recover("check")}>Check Again</button>}
-        {hash && <button className="button-secondary" type="button" onClick={() => void recover("resume")}>Resume Confirmation</button>}
-        <button className="button-secondary border-red-400/40 text-red-200" type="button" onClick={abandon}>Abandon Pending Trade</button>
-      </div>}
-    </div>}
   </section>;
+}
+
+function QuoteRow({ label, value, secondary, strong = false }: { label: string; value: string; secondary?: string; strong?: boolean }) {
+  return <div className="mt-2 flex min-w-0 items-start justify-between gap-4"><span className="text-zinc-500">{label}</span><span className="min-w-0 text-right"><span className={`block break-words ${strong ? "font-semibold text-cyan-100" : "text-zinc-200"}`}>{value}</span>{secondary && <span className="mt-0.5 block text-[0.68rem] text-zinc-600">{secondary}</span>}</span></div>;
+}
+
+function tokenValueWei(amount: bigint, decimals: number, priceWei: string) {
+  try { return amount * BigInt(priceWei) / (BigInt(10) ** BigInt(decimals)); } catch { return null; }
+}
+
+function inputEthUsd(value: string, reference: EthUsdReference | null) {
+  try { return /^\d+(\.\d+)?$/.test(value.trim()) ? formatWeiUsd(parseEther(value.trim()), reference) : "—"; } catch { return "—"; }
+}
+
+function tokenUsdEstimate(value: bigint | null, reference: EthUsdReference | null) {
+  if (value === null) return "USD estimate unavailable";
+  const formatted = formatWeiUsd(value, reference);
+  return formatted === "USD unavailable" ? formatted : `Estimated ${formatted}`;
+}
+
+function quoteExpiresAt(record: QuoteRecord) {
+  const deadline = Number(record.quote.deadline) * 1000;
+  return Math.min(record.createdAt + QUOTE_TTL_MS, Number.isSafeInteger(deadline) ? deadline : record.createdAt + QUOTE_TTL_MS);
+}
+
+function quoteInputIsValid(value: string, decimals: number, symbol: string, slippage: string) {
+  try {
+    parsePositiveAmount(value, decimals, symbol);
+    parseSlippageBps(slippage);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parsePositiveAmount(value: string, decimals: number, symbol: string) {
@@ -431,12 +525,6 @@ function safeMessage(reason: unknown) {
 function isDefinitivePreSubmissionFailure(reason: unknown) {
   const message = reason instanceof Error ? reason.message : String(reason);
   return /reject|denied|cancelled|revert|simulation|insufficient|quote expired/i.test(message);
-}
-
-function formatAmount(amount: bigint, decimals: number) {
-  const value = decimals === 18 ? formatEther(amount) : formatUnits(amount, decimals);
-  const [whole, fraction = ""] = value.split(".");
-  return fraction ? `${whole}.${fraction.slice(0, 6).replace(/0+$/, "")}`.replace(/\.$/, "") : whole;
 }
 
 function formatDeadline(deadline: bigint) {

@@ -15,7 +15,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function CreatePage() {
   if (!hasPrivyAppId) {
-    return <main className="container flex-1 py-12"><p className="eyebrow">Phase 7</p><h1 className="mt-3 text-3xl font-semibold text-white">Create a token</h1><div className="panel mt-8 max-w-xl text-sm text-amber-200">Set NEXT_PUBLIC_PRIVY_APP_ID to enable token creation.</div></main>;
+    return <main className="container page-shell flex-1"><p className="eyebrow">Token launch</p><h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Create a token</h1><div className="status-box status-warning mt-8 max-w-xl">Set NEXT_PUBLIC_PRIVY_APP_ID to enable token creation.</div></main>;
   }
   return <PrivyCreatePage />;
 }
@@ -39,6 +39,10 @@ function PrivyCreatePage() {
     form.set("name", input.name.trim());
     form.set("symbol", input.symbol.trim());
     form.set("description", input.description.trim());
+    form.set("website_url", input.websiteUrl.trim());
+    form.set("x_url", input.xUrl.trim());
+    form.set("telegram_url", input.telegramUrl.trim());
+    form.set("discord_url", input.discordUrl.trim());
     form.set("initial_supply", FIXED_TOKEN_SUPPLY.toString());
     form.set("image", input.image!);
     report({ status: "preparing" });
@@ -68,5 +72,14 @@ function PrivyCreatePage() {
     return { tokenAddress: getAddress(created.token), hash };
   };
 
-  return <main className="container flex-1 py-12"><p className="eyebrow">Phase 7</p><h1 className="mt-3 text-3xl font-semibold text-white">Create a token</h1><p className="mt-3 max-w-2xl text-zinc-300">Atomically launch a fixed 1 billion supply token with all inventory assigned to its Base Sepolia bonding curve.</p><CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} /></main>;
+  return <main className="container page-shell flex-1">
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+      <div className="min-w-0"><p className="eyebrow">Token launch</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1><p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300">Publish its identity, review the permanent supply settings, then confirm one Base Sepolia factory transaction.</p><CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} /></div>
+      <aside className="panel lg:sticky lg:top-24" aria-label="Launch overview"><p className="eyebrow">What happens</p><ol className="mt-5 grid gap-5"><LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." /><LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." /><LaunchStep number="3" title="Confirmation" copy="After Base Sepolia confirms and the indexer catches up, your token page opens." /></ol><div className="mt-6 border-t border-white/8 pt-5 text-sm leading-6 text-zinc-400"><p><span className="font-medium text-zinc-200">Initial purchase:</span> not part of this launch transaction.</p><p className="mt-2"><span className="font-medium text-zinc-200">Cost:</span> network gas only; trading fees are shown in protected quotes later.</p></div></aside>
+    </div>
+  </main>;
+}
+
+function LaunchStep({ number, title, copy }: { number: string; title: string; copy: string }) {
+  return <li className="flex gap-3"><span className="flex h-7 w-7 flex-none items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/8 font-mono text-xs text-cyan-200">{number}</span><div><p className="text-sm font-semibold text-white">{title}</p><p className="mt-1 text-xs leading-5 text-zinc-500">{copy}</p></div></li>;
 }

@@ -38,8 +38,10 @@ describe("transaction foundation", () => {
   });
 
   it("validates metadata and image constraints", () => {
-    const valid = { name: "Zonk", symbol: "ZK", description: "A token", supply: "1000", image: new File(["ok"], "token.png", { type: "image/png" }) };
+    const valid = { name: "Zonk", symbol: "ZK", description: "A token", websiteUrl: "https://zonk.fun", xUrl: "https://x.com/zonk", telegramUrl: "https://t.me/zonk", discordUrl: "https://discord.gg/zonk", image: new File(["ok"], "token.png", { type: "image/png" }) };
     expect(validateCreateToken(valid)).toEqual({});
+    expect(validateCreateToken({ ...valid, description: "", websiteUrl: "", xUrl: "", telegramUrl: "", discordUrl: "" })).toEqual({});
+    expect(validateCreateToken({ ...valid, xUrl: "https://example.com/zonk" }).xUrl).toMatch(/X\/Twitter/);
     expect(validateCreateToken({ ...valid, image: new File(["bad"], "token.svg", { type: "image/svg+xml" }) }).image).toMatch(/PNG/);
     expect(validateCreateToken({ ...valid, image: new File([new Uint8Array(MAX_IMAGE_BYTES + 1)], "large.png", { type: "image/png" }) }).image).toMatch(/5 MB/);
   });

@@ -6,10 +6,11 @@ import { SmartWalletsProvider } from "@privy-io/react-auth/smart-wallets";
 import { useState, type ReactNode } from "react";
 import { hasPrivyAppId, privyAppId, privyConfig } from "@/lib/wallet";
 import { ActiveWalletProvider } from "@/providers/active-wallet-provider";
+import { OraclePriceProvider } from "@/providers/oracle-price-provider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, retry: 1 } } }));
-  const content = <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  const content = <QueryClientProvider client={queryClient}><OraclePriceProvider>{children}</OraclePriceProvider></QueryClientProvider>;
   if (!hasPrivyAppId) return content;
   return <PrivyProvider appId={privyAppId} config={privyConfig}><SmartWalletsProvider><ActiveWalletProvider>{content}</ActiveWalletProvider></SmartWalletsProvider></PrivyProvider>;
 }

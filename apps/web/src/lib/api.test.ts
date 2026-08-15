@@ -17,6 +17,10 @@ describe("API client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "invalid_request", message: "limit must be between 1 and 100" } }), { status: 400 })));
     await expect(api.listTokens("?limit=101")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
+  it("parses the runtime Chainlink ETH/USD reference", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ price: "2500.12345678", price_decimals: 8, updated_at: "2026-08-15T10:00:00Z", feed: "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1", source: "chainlink_base_sepolia", max_age_seconds: 3600 }), { status: 200 })));
+    await expect(api.ethUsdPrice()).resolves.toMatchObject({ price: "2500.12345678", price_decimals: 8, source: "chainlink_base_sepolia" });
+  });
   it("normalizes malformed HTTP errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 500 })));
     await expect(api.listTokens()).rejects.toMatchObject({ status: 500, code: "http_error" });
@@ -24,8 +28,8 @@ describe("API client", () => {
   it("parses V3 pricing and canonical chart payloads", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ token_address: "0x1", current_price: "7", fully_diluted_value: "7000", source: "indexed_v3_curve" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ bucket_start: 3600, trade_count: 1, buy_count: 1, sell_count: 0, volume: "10", unique_trader_count: 1, open_price: "6", high_price: "8", low_price: "5", close_price: "7" }] }), { status: 200 })));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ interval: "1h", supported_intervals: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"], candles: [{ bucket_start: 3600, trade_count: 1, buy_count: 1, sell_count: 0, volume: "10", unique_trader_count: 1, open_price: "6", high_price: "8", low_price: "5", close_price: "7" }] }), { status: 200 })));
     await expect(api.pricing("0x1")).resolves.toMatchObject({ fully_diluted_value: "7000", source: "indexed_v3_curve" });
-    await expect(api.chart("0x1")).resolves.toMatchObject({ items: [expect.objectContaining({ open_price: "6", high_price: "8", low_price: "5", close_price: "7" })] });
+    await expect(api.chart("0x1")).resolves.toMatchObject({ interval: "1h", supported_intervals: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"], candles: [expect.objectContaining({ open_price: "6", high_price: "8", low_price: "5", close_price: "7" })] });
   });
 });

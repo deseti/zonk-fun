@@ -27,7 +27,7 @@ type Repository interface {
 	Creator(context.Context, int64, string, int, string) (CreatorProfile, error)
 	Trades(context.Context, int64, string, int, string) (TradePage, error)
 	Activity(context.Context, int64, string, int, string) (ActivityPage, error)
-	Chart(context.Context, int64, string, int) (ChartPage, error)
+	Chart(context.Context, int64, string, string, int) (ChartPage, error)
 	SaveMetadataDraft(context.Context, MetadataDraft) error
 	FinalizeMetadata(context.Context, int64, string, string, string) error
 }
@@ -48,7 +48,7 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 func (r *PostgresRepository) requireSchema(ctx context.Context) error {
 	var ready bool
 	e := r.pool.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8]
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.token_metadata_drafts') IS NOT NULL
 		AND to_regclass('public.token_holder_balances') IS NOT NULL
@@ -64,7 +64,7 @@ func (r *PostgresRepository) requireSchema(ctx context.Context) error {
 func (r *PostgresRepository) Close()                         { r.pool.Close() }
 func (r *PostgresRepository) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
-const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),t.block_number,t.transaction_hash,t.log_index,
+const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),coalesce(t.website_url,''),coalesce(t.x_url,''),coalesce(t.telegram_url,''),coalesce(t.discord_url,''),t.block_number,t.transaction_hash,t.log_index,
  c.curve_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
  m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,m.unique_trader_count,m.latest_trade_timestamp,m.current_price,m.fully_diluted_value,m.holder_count,
  g.phase,g.liquidity_token_address,g.token_amount,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
@@ -80,7 +80,7 @@ func scanToken(row pgx.Row) (Token, error) {
 	var tc, bc, sc, uniqueTraders, latestTrade, holders *int64
 	var vol, fees, price, fullyDilutedValue *string
 	var unlock *int64
-	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &fullyDilutedValue, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
+	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.WebsiteURL, &t.XURL, &t.TelegramURL, &t.DiscordURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &fullyDilutedValue, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
 	if e != nil {
 		return t, e
 	}
@@ -94,7 +94,7 @@ func scanToken(row pgx.Row) (Token, error) {
 	return t, nil
 }
 func (r *PostgresRepository) SaveMetadataDraft(ctx context.Context, d MetadataDraft) error {
-	_, e := r.pool.Exec(ctx, `INSERT INTO token_metadata_drafts(draft_id,name,symbol,initial_supply,description,image_url,metadata_url) VALUES($1,$2,$3,$4,$5,$6,$7)`, d.ID, d.Name, d.Symbol, d.InitialSupply, d.Description, d.ImageURL, d.MetadataURL)
+	_, e := r.pool.Exec(ctx, `INSERT INTO token_metadata_drafts(draft_id,name,symbol,initial_supply,description,image_url,metadata_url,website_url,x_url,telegram_url,discord_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, d.ID, d.Name, d.Symbol, d.InitialSupply, d.Description, d.ImageURL, d.MetadataURL, emptyNull(d.WebsiteURL), emptyNull(d.XURL), emptyNull(d.TelegramURL), emptyNull(d.DiscordURL))
 	return e
 }
 func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, draftID, token, txHash string) error {
@@ -104,8 +104,9 @@ func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, 
 	}
 	defer tx.Rollback(ctx)
 	var name, symbol, supply, description, imageURL, metadataURL, finalizedToken, finalizedTx string
+	var websiteURL, xURL, telegramURL, discordURL *string
 	var finalized bool
-	e = tx.QueryRow(ctx, `SELECT name,symbol,initial_supply::text,description,image_url,metadata_url,coalesce(token_address,''),coalesce(transaction_hash,''),finalized_at IS NOT NULL FROM token_metadata_drafts WHERE draft_id=$1 FOR UPDATE`, draftID).Scan(&name, &symbol, &supply, &description, &imageURL, &metadataURL, &finalizedToken, &finalizedTx, &finalized)
+	e = tx.QueryRow(ctx, `SELECT name,symbol,initial_supply::text,description,image_url,metadata_url,website_url,x_url,telegram_url,discord_url,coalesce(token_address,''),coalesce(transaction_hash,''),finalized_at IS NOT NULL FROM token_metadata_drafts WHERE draft_id=$1 FOR UPDATE`, draftID).Scan(&name, &symbol, &supply, &description, &imageURL, &metadataURL, &websiteURL, &xURL, &telegramURL, &discordURL, &finalizedToken, &finalizedTx, &finalized)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -126,7 +127,7 @@ func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, 
 	if !indexed {
 		return ErrNotFound
 	}
-	result, e := tx.Exec(ctx, `UPDATE tokens SET description=$4,image_url=$5,metadata_url=$6 WHERE chain_id=$1 AND lower(token_address)=lower($2) AND lower(transaction_hash)=lower($3) AND is_canonical`, chain, token, txHash, description, imageURL, metadataURL)
+	result, e := tx.Exec(ctx, `UPDATE tokens SET description=$4,image_url=$5,metadata_url=$6,website_url=$7,x_url=$8,telegram_url=$9,discord_url=$10 WHERE chain_id=$1 AND lower(token_address)=lower($2) AND lower(transaction_hash)=lower($3) AND is_canonical`, chain, token, txHash, description, imageURL, metadataURL, websiteURL, xURL, telegramURL, discordURL)
 	if e != nil {
 		return e
 	}
@@ -144,6 +145,12 @@ func value(v *string) string {
 		return "0"
 	}
 	return *v
+}
+func emptyNull(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 func valueInt(v *int64) int64 {
 	if v == nil {
@@ -447,21 +454,75 @@ func (r *PostgresRepository) Activity(ctx context.Context, chain int64, token st
 	}
 	return out, nil
 }
-func (r *PostgresRepository) Chart(ctx context.Context, chain int64, token string, limit int) (ChartPage, error) {
-	rows, e := r.pool.Query(ctx, `SELECT bucket_start,trade_count,buy_count,sell_count,volume::text,unique_trader_count,open_price::text,high_price::text,low_price::text,close_price::text
-		FROM (SELECT * FROM token_trade_buckets WHERE chain_id=$1 AND lower(token_address)=lower($2) ORDER BY bucket_start DESC LIMIT $3) buckets
-		ORDER BY bucket_start ASC`, chain, token, limit)
+
+var supportedChartIntervals = []string{"1m", "5m", "15m", "1h", "4h", "1d", "1w"}
+
+type chartInterval struct {
+	seconds int64
+	weekly  bool
+}
+
+func parseChartInterval(value string) (chartInterval, bool) {
+	intervals := map[string]chartInterval{
+		"1m":  {seconds: 60},
+		"5m":  {seconds: 5 * 60},
+		"15m": {seconds: 15 * 60},
+		"1h":  {seconds: 60 * 60},
+		"4h":  {seconds: 4 * 60 * 60},
+		"1d":  {seconds: 24 * 60 * 60},
+		"1w":  {seconds: 7 * 24 * 60 * 60, weekly: true},
+	}
+	parsed, ok := intervals[value]
+	return parsed, ok
+}
+
+func (r *PostgresRepository) Chart(ctx context.Context, chain int64, token, interval string, limit int) (ChartPage, error) {
+	spec, ok := parseChartInterval(interval)
+	if !ok {
+		return ChartPage{}, fmt.Errorf("unsupported chart interval %q", interval)
+	}
+	rows, e := r.pool.Query(ctx, `WITH ordered AS (
+		SELECT CASE WHEN $4::boolean
+				THEN extract(epoch FROM date_trunc('week', to_timestamp(b.block_timestamp) AT TIME ZONE 'UTC'))::bigint
+				ELSE (b.block_timestamp / $3::bigint) * $3::bigint
+			END bucket_start,
+			t.side,t.token_amount,t.curve_value,t.trader_address,t.block_number,t.transaction_hash,t.log_index,
+			sum(CASE WHEN t.side='buy' THEN t.token_amount ELSE -t.token_amount END) OVER (ORDER BY t.block_number,t.log_index,t.transaction_hash) sold_supply,
+			sum(CASE WHEN t.side='buy' THEN t.curve_value ELSE -t.curve_value END) OVER (ORDER BY t.block_number,t.log_index,t.transaction_hash) reserve_balance
+		FROM trades t
+		JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
+		WHERE t.chain_id=$1 AND lower(t.token_address)=lower($2) AND t.is_canonical
+	), prices AS (
+		SELECT bucket_start,block_number,log_index,transaction_hash,
+			ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) price
+		FROM ordered
+		WHERE sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
+	), buckets AS (
+		SELECT t.bucket_start,count(*) trade_count,count(*) FILTER (WHERE t.side='buy') buy_count,count(*) FILTER (WHERE t.side='sell') sell_count,
+			coalesce(sum(t.curve_value),0) volume,count(DISTINCT lower(t.trader_address)) unique_trader_count,
+			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number,t.log_index,t.transaction_hash))[1] END open_price,
+			CASE WHEN count(p.price)=count(*) THEN max(p.price) END high_price,
+			CASE WHEN count(p.price)=count(*) THEN min(p.price) END low_price,
+			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number DESC,t.log_index DESC,t.transaction_hash DESC))[1] END close_price
+		FROM ordered t
+		LEFT JOIN prices p USING(bucket_start,block_number,log_index,transaction_hash)
+		GROUP BY t.bucket_start
+	), limited AS (
+		SELECT * FROM buckets ORDER BY bucket_start DESC LIMIT $5
+	)
+	SELECT bucket_start,trade_count,buy_count,sell_count,volume::text,unique_trader_count,open_price::text,high_price::text,low_price::text,close_price::text
+	FROM limited ORDER BY bucket_start ASC`, chain, token, spec.seconds, spec.weekly, limit)
 	if e != nil {
 		return ChartPage{}, e
 	}
 	defer rows.Close()
-	out := ChartPage{Items: []ChartPoint{}}
+	out := ChartPage{Interval: interval, SupportedIntervals: append([]string(nil), supportedChartIntervals...), Candles: []ChartPoint{}}
 	for rows.Next() {
 		var point ChartPoint
 		if e = rows.Scan(&point.BucketStart, &point.TradeCount, &point.BuyCount, &point.SellCount, &point.Volume, &point.UniqueTraderCount, &point.OpenPrice, &point.HighPrice, &point.LowPrice, &point.ClosePrice); e != nil {
 			return ChartPage{}, e
 		}
-		out.Items = append(out.Items, point)
+		out.Candles = append(out.Candles, point)
 	}
 	if e = rows.Err(); e != nil {
 		return ChartPage{}, e
