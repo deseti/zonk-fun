@@ -37,14 +37,15 @@ type BlockRef struct {
 	LogIndex        int64  `json:"log_index"`
 }
 type Curve struct {
-	Address             string `json:"address"`
-	Supply              string `json:"supply,omitempty"`
-	SoldSupply          string `json:"sold_supply"`
-	ReserveBalance      string `json:"reserve_balance"`
-	StartingPrice       string `json:"starting_price,omitempty"`
-	Slope               string `json:"slope,omitempty"`
-	GraduationThreshold string `json:"graduation_threshold,omitempty"`
-	Lifecycle           string `json:"lifecycle,omitempty"`
+	Address              string `json:"address"`
+	CanonicalPoolAddress string `json:"canonical_pool_address,omitempty"`
+	Supply               string `json:"supply,omitempty"`
+	SoldSupply           string `json:"sold_supply"`
+	ReserveBalance       string `json:"reserve_balance"`
+	StartingPrice        string `json:"starting_price,omitempty"`
+	Slope                string `json:"slope,omitempty"`
+	GraduationThreshold  string `json:"graduation_threshold,omitempty"`
+	Lifecycle            string `json:"lifecycle,omitempty"`
 }
 type Metrics struct {
 	TradeCount           int64   `json:"trade_count"`
@@ -59,13 +60,24 @@ type Metrics struct {
 	HolderCount          *int64  `json:"holder_count"`
 }
 type Graduation struct {
-	Phase           string `json:"phase"`
-	LiquidityToken  string `json:"liquidity_token,omitempty"`
-	TokenAmount     string `json:"token_amount,omitempty"`
-	QuoteAmount     string `json:"quote_amount,omitempty"`
-	LiquidityAmount string `json:"liquidity_amount,omitempty"`
-	LockID          string `json:"lock_id,omitempty"`
-	UnlockTimestamp *int64 `json:"unlock_timestamp,omitempty"`
+	Phase                    string    `json:"phase"`
+	CanonicalPoolAddress     string    `json:"canonical_pool_address,omitempty"`
+	GraduationManagerAddress string    `json:"graduation_manager_address,omitempty"`
+	LPCustodianAddress       string    `json:"lp_custodian_address,omitempty"`
+	PositionTokenID          string    `json:"position_token_id,omitempty"`
+	Liquidity                string    `json:"liquidity,omitempty"`
+	TokenAmount              string    `json:"token_amount,omitempty"`
+	ETHAmount                string    `json:"eth_amount,omitempty"`
+	SoldSupply               string    `json:"sold_supply,omitempty"`
+	CurveTerminalAt          *BlockRef `json:"curve_terminal_at,omitempty"`
+	SettledAt                *BlockRef `json:"settled_at,omitempty"`
+	// Legacy generic fields remain additive for existing clients. Endpoint-cp-v3
+	// code must use the explicit fields above.
+	LiquidityToken  *string `json:"liquidity_token,omitempty"`
+	QuoteAmount     *string `json:"quote_amount,omitempty"`
+	LiquidityAmount *string `json:"liquidity_amount,omitempty"`
+	LockID          *string `json:"lock_id,omitempty"`
+	UnlockTimestamp *int64  `json:"unlock_timestamp,omitempty"`
 }
 type Page struct {
 	Items      []Token `json:"items"`

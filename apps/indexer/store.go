@@ -60,7 +60,7 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 	}
 	var ready bool
 	e = p.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9]
 		AND to_regclass('public.chain_events') IS NOT NULL
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.curves') IS NOT NULL`).Scan(&ready)
@@ -138,6 +138,9 @@ func (s *Store) Apply(ctx context.Context, chain int64, name string, b *types.He
 	return s.ApplyWithMetadata(ctx, chain, name, b, logs, nil)
 }
 func (s *Store) ApplyWithMetadata(ctx context.Context, chain int64, name string, b *types.Header, logs []types.Log, metadata map[string]TokenMetadata) error {
+	if e := validateGraduationPairs(logs); e != nil {
+		return e
+	}
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
 		return e
@@ -366,6 +369,9 @@ func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metad
 	if !ok && l.Topics[0] == v3TradeABI.Events["TokensSold"].ID {
 		ev, ok = "TokensSoldV3", true
 	}
+	if !ok && l.Topics[0] == v3GraduationABI.Events["GraduatedV3"].ID {
+		ev, ok = "GraduatedV3", true
+	}
 	if !ok {
 		log.Printf("zonk-indexer: unknown event chain_id=%d contract=%s tx=%s block=%d log_index=%d topic=%s", chain, l.Address.Hex(), l.TxHash.Hex(), l.BlockNumber, l.Index, l.Topics[0].Hex())
 		return nil
@@ -379,6 +385,10 @@ func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metad
 	if ev == "TokensSoldV3" {
 		decoderABI = v3TradeABI
 		decoderEvent = "TokensSold"
+	}
+	if ev == "GraduatedV3" {
+		decoderABI = v3GraduationABI
+		decoderEvent = "GraduatedV3"
 	}
 	vals := map[string]any{}
 	if e := decoderABI.UnpackIntoMap(vals, decoderEvent, l.Data); e != nil {
@@ -466,8 +476,8 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 		if e != nil {
 			return e
 		}
-		_, e = tx.Exec(ctx, `INSERT INTO curves(chain_id,token_address,curve_address,creator_address,curve_supply,starting_price,slope,graduation_threshold,lifecycle,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,0,0,$5,'active',$6,$7,$8,$9)
-			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,curve_address=excluded.curve_address,creator_address=excluded.creator_address,curve_supply=excluded.curve_supply,graduation_threshold=excluded.graduation_threshold,lifecycle='active',block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["curve"]), u(v["creator"]), u(v["curveAllocation"]), l.BlockNumber, b, t, i)
+		_, e = tx.Exec(ctx, `INSERT INTO curves(chain_id,token_address,curve_address,creator_address,curve_supply,starting_price,slope,graduation_threshold,lifecycle,canonical_pool_address,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,0,0,$5,'active',$6,$7,$8,$9,$10)
+			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,curve_address=excluded.curve_address,creator_address=excluded.creator_address,curve_supply=excluded.curve_supply,graduation_threshold=excluded.graduation_threshold,lifecycle='active',canonical_pool_address=excluded.canonical_pool_address,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["curve"]), u(v["creator"]), u(v["curveAllocation"]), u(v["canonicalPool"]), l.BlockNumber, b, t, i)
 		return e
 	case "TokensBoughtV3", "TokensSoldV3":
 		side := "buy"
@@ -495,8 +505,12 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 		return nil
 	case "Graduated":
 		// V3 emits the graduation manager, forwarded ETH, and terminal sold supply.
-		_, e := tx.Exec(ctx, `INSERT INTO graduations(chain_id,token_address,liquidity_token_address,phase,sold_supply,token_amount,quote_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,'graduated',$4,$5,$6,$7,$8,$9,$10)
-			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,liquidity_token_address=excluded.liquidity_token_address,phase='graduated',sold_supply=excluded.sold_supply,reserve_balance=NULL,token_amount=excluded.token_amount,quote_amount=excluded.quote_amount,liquidity_amount=NULL,lock_id=NULL,unlock_timestamp=NULL,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["graduationManager"]), u(v["soldSupply"]), u(v["tokenAmount"]), u(v["ethAmount"]), l.BlockNumber, b, t, i)
+		_, e := tx.Exec(ctx, `INSERT INTO graduations(chain_id,token_address,phase,sold_supply,token_amount,graduation_manager_address,eth_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'graduated',$3,$4,$5,$6,$7,$8,$9,$10)
+			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,phase='graduated',sold_supply=excluded.sold_supply,reserve_balance=NULL,token_amount=excluded.token_amount,graduation_manager_address=excluded.graduation_manager_address,eth_amount=excluded.eth_amount,liquidity_token_address=NULL,quote_amount=NULL,liquidity_amount=NULL,lock_id=NULL,unlock_timestamp=NULL,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(v["soldSupply"]), u(v["tokenAmount"]), u(v["graduationManager"]), u(v["ethAmount"]), l.BlockNumber, b, t, i)
+		return e
+	case "GraduatedV3":
+		_, e := tx.Exec(ctx, `INSERT INTO liquidity_events(chain_id,token_address,event_name,graduation_manager_address,lp_custodian_address,position_token_id,liquidity_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'GraduatedV3',$3,$4,$5,$6,$7,$8,$9,$10)
+			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,event_name='GraduatedV3',graduation_manager_address=excluded.graduation_manager_address,lp_custodian_address=excluded.lp_custodian_address,position_token_id=excluded.position_token_id,liquidity_amount=excluded.liquidity_amount,liquidity_token_address=NULL,amount=NULL,lock_id=NULL,beneficiary_address=NULL,unlock_timestamp=NULL,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), l.Address.Hex(), u(v["custodian"]), u(v["tokenId"]), u(v["liquidity"]), l.BlockNumber, b, t, i)
 		return e
 	}
 	return nil

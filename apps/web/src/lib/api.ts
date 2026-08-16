@@ -1,7 +1,24 @@
 import type { ActivityPage, ApiError, ChartPage, CreatorProfile, ETHUSDPrice, Pricing, Token, TokenPage, TradePage } from "@zonk/types";
 import { z } from "zod";
 
-const tokenSchema = z.object({ address: z.string(), creator: z.string(), name: z.string(), symbol: z.string(), initial_supply: z.string(), description: z.string().optional(), image_url: z.string().optional(), metadata_url: z.string().optional(), website_url: z.url().optional(), x_url: z.url().optional(), telegram_url: z.url().optional(), discord_url: z.url().optional(), created_at: z.object({ block_number: z.number(), transaction_hash: z.string(), log_index: z.number() }), metrics: z.object({ trade_count: z.number(), buy_count: z.number(), sell_count: z.number(), volume: z.string(), fees: z.string(), unique_trader_count: z.number(), latest_trade_timestamp: z.number().nullable(), current_price: z.string().nullable(), fully_diluted_value: z.string().nullable(), holder_count: z.number().nullable() }), curve: z.object({ address: z.string(), sold_supply: z.string(), reserve_balance: z.string() }).passthrough().optional(), graduation: z.object({ phase: z.string() }).passthrough().optional() });
+const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+const transactionHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
+const integerStringSchema = z.string().regex(/^\d+$/);
+const blockRefSchema = z.object({ block_number: z.number().int().nonnegative(), transaction_hash: transactionHashSchema, log_index: z.number().int().nonnegative() });
+const graduationSchema = z.object({
+  phase: z.string(),
+  canonical_pool_address: addressSchema.optional(),
+  graduation_manager_address: addressSchema.optional(),
+  lp_custodian_address: addressSchema.optional(),
+  position_token_id: integerStringSchema.optional(),
+  liquidity: integerStringSchema.optional(),
+  token_amount: integerStringSchema.optional(),
+  eth_amount: integerStringSchema.optional(),
+  sold_supply: integerStringSchema.optional(),
+  curve_terminal_at: blockRefSchema.optional(),
+  settled_at: blockRefSchema.optional(),
+}).passthrough();
+const tokenSchema = z.object({ address: z.string(), creator: z.string(), name: z.string(), symbol: z.string(), initial_supply: z.string(), description: z.string().optional(), image_url: z.string().optional(), metadata_url: z.string().optional(), website_url: z.url().optional(), x_url: z.url().optional(), telegram_url: z.url().optional(), discord_url: z.url().optional(), created_at: z.object({ block_number: z.number(), transaction_hash: z.string(), log_index: z.number() }), metrics: z.object({ trade_count: z.number(), buy_count: z.number(), sell_count: z.number(), volume: z.string(), fees: z.string(), unique_trader_count: z.number(), latest_trade_timestamp: z.number().nullable(), current_price: z.string().nullable(), fully_diluted_value: z.string().nullable(), holder_count: z.number().nullable() }), curve: z.object({ address: z.string(), canonical_pool_address: addressSchema.optional(), sold_supply: z.string(), reserve_balance: z.string() }).passthrough().optional(), graduation: graduationSchema.optional() });
 const tokenPageSchema = z.object({ items: z.array(tokenSchema), next_cursor: z.string().optional() });
 const errorSchema = z.object({ error: z.object({ code: z.string(), message: z.string() }) });
 const serviceSchema = z.object({ status: z.string(), service: z.string(), request_id: z.string().optional() });

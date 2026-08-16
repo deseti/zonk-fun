@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/ethereum/go-ethereum"
@@ -76,6 +77,18 @@ func (x *Indexer) Run(ctx context.Context) error {
 			if e != nil {
 				return e
 			}
+			logs, e = x.discoverLaunchLogs(ctx, end, logs)
+			if e != nil {
+				return e
+			}
+			logs, e = x.discoverGraduationSettlements(ctx, logs)
+			if e != nil {
+				return e
+			}
+			logs, e = canonicalLogs(logs)
+			if e != nil {
+				return e
+			}
 			by := map[uint64][]types.Log{}
 			for _, l := range logs {
 				by[l.BlockNumber] = append(by[l.BlockNumber], l)
@@ -101,17 +114,6 @@ func (x *Indexer) Run(ctx context.Context) error {
 				if n == last+1 && b.ParentHash.Hex() != lastHash && last > 0 && lastHash != "" {
 					return fmt.Errorf("parent mismatch at block %d", n)
 				}
-				extraTransfers, e := x.launchTransfers(ctx, n, by[n])
-				if e != nil {
-					return e
-				}
-				by[n] = append(by[n], extraTransfers...)
-				sort.Slice(by[n], func(i, j int) bool {
-					if by[n][i].TxIndex != by[n][j].TxIndex {
-						return by[n][i].TxIndex < by[n][j].TxIndex
-					}
-					return by[n][i].Index < by[n][j].Index
-				})
 				metadata, e := x.v3Metadata(ctx, by[n])
 				if e != nil {
 					return e
@@ -134,49 +136,266 @@ func (x *Indexer) Run(ctx context.Context) error {
 	}
 }
 
-// launchTransfers closes the address-discovery gap for a token's launch block.
-// The normal bounded address filter includes all previously indexed tokens. A
-// newly created token cannot be known before its factory event, so we make one
-// Transfer-topic-only query per discovered token for that exact block. More than
-// 32 launches in a block fails closed instead of silently producing balances.
-func (x *Indexer) launchTransfers(ctx context.Context, block uint64, logs []types.Log) ([]types.Log, error) {
-	seen := map[common.Address]struct{}{}
+type launchDiscovery struct {
+	token, curve common.Address
+	block        uint64
+}
+
+// discoverLaunchLogs closes the range-query address-discovery gap without a
+// global topic scan. Each factory-authenticated launch causes bounded queries
+// against only its token and curve from the launch block through this batch.
+func (x *Indexer) discoverLaunchLogs(ctx context.Context, end uint64, logs []types.Log) ([]types.Log, error) {
+	seen := map[common.Address]launchDiscovery{}
 	for _, l := range logs {
-		if len(l.Topics) == 0 {
+		if len(l.Topics) == 0 || l.Topics[0] != contractABI.Events["TokenLaunchedV3"].ID {
 			continue
 		}
-		var event string
-		switch l.Topics[0] {
-		case contractABI.Events["TokenLaunchedV3"].ID:
-			event = "TokenLaunchedV3"
-		default:
-			continue
+		values, err := decodeLog(contractABI, "TokenLaunchedV3", l)
+		if err != nil {
+			return nil, fmt.Errorf("decode launch discovery: %w", err)
 		}
-		values := map[string]any{}
-		if err := abi.ParseTopicsIntoMap(values, indexedArguments(contractABI.Events[event].Inputs), l.Topics[1:]); err != nil {
-			return nil, fmt.Errorf("decode launch token: %w", err)
+		token, tokenOK := values["token"].(common.Address)
+		curve, curveOK := values["curve"].(common.Address)
+		if !tokenOK || !curveOK || token == (common.Address{}) || curve == (common.Address{}) {
+			return nil, fmt.Errorf("decode launch discovery: invalid token or curve")
 		}
-		token, ok := values["token"].(common.Address)
-		if !ok {
-			return nil, fmt.Errorf("decode launch token: token is not an address")
+		discovery := launchDiscovery{token: token, curve: curve, block: l.BlockNumber}
+		if prior, ok := seen[token]; ok && prior != discovery {
+			return nil, fmt.Errorf("contradictory launch discovery for token %s", token.Hex())
 		}
-		seen[token] = struct{}{}
+		seen[token] = discovery
 	}
 	if len(seen) > 32 {
-		return nil, fmt.Errorf("too many token launches in block %d for bounded Transfer discovery", block)
+		return nil, fmt.Errorf("too many token launches in batch for bounded address discovery: %d", len(seen))
 	}
-	out := []types.Log{}
-	for token := range seen {
-		logs, err := x.rpc.FilterLogs(ctx, ethereum.FilterQuery{
-			FromBlock: new(big.Int).SetUint64(block), ToBlock: new(big.Int).SetUint64(block),
-			Addresses: []common.Address{token}, Topics: [][]common.Hash{{contractABI.Events["Transfer"].ID}},
+	discoveries := make([]launchDiscovery, 0, len(seen))
+	for _, discovery := range seen {
+		discoveries = append(discoveries, discovery)
+	}
+	sort.Slice(discoveries, func(i, j int) bool {
+		if discoveries[i].block != discoveries[j].block {
+			return discoveries[i].block < discoveries[j].block
+		}
+		return bytes.Compare(discoveries[i].token.Bytes(), discoveries[j].token.Bytes()) < 0
+	})
+	out := append([]types.Log(nil), logs...)
+	for _, discovery := range discoveries {
+		transfers, err := x.rpc.FilterLogs(ctx, ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(discovery.block), ToBlock: new(big.Int).SetUint64(end),
+			Addresses: []common.Address{discovery.token}, Topics: [][]common.Hash{{contractABI.Events["Transfer"].ID}},
 		})
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, logs...)
+		curveLogs, err := x.rpc.FilterLogs(ctx, ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(discovery.block), ToBlock: new(big.Int).SetUint64(end),
+			Addresses: []common.Address{discovery.curve}, Topics: [][]common.Hash{{
+				v3TradeABI.Events["TokensBought"].ID,
+				v3TradeABI.Events["TokensSold"].ID,
+				contractABI.Events["Graduated"].ID,
+			}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, discovered := range transfers {
+			if discovered.BlockNumber < discovery.block || discovered.BlockNumber > end {
+				return nil, fmt.Errorf("discovered launch log outside requested range")
+			}
+			if discovered.Address != discovery.token || len(discovered.Topics) == 0 || discovered.Topics[0] != contractABI.Events["Transfer"].ID {
+				return nil, fmt.Errorf("token discovery returned unexpected log from %s", discovered.Address.Hex())
+			}
+		}
+		for _, discovered := range curveLogs {
+			if discovered.BlockNumber < discovery.block || discovered.BlockNumber > end {
+				return nil, fmt.Errorf("discovered launch log outside requested range")
+			}
+			if discovered.Address != discovery.curve || len(discovered.Topics) == 0 || !isCurveRuntimeTopic(discovered.Topics[0]) {
+				return nil, fmt.Errorf("curve discovery returned unexpected log from %s", discovered.Address.Hex())
+			}
+		}
+		out = append(out, transfers...)
+		out = append(out, curveLogs...)
 	}
 	return out, nil
+}
+
+func isCurveRuntimeTopic(topic common.Hash) bool {
+	return topic == v3TradeABI.Events["TokensBought"].ID || topic == v3TradeABI.Events["TokensSold"].ID || topic == contractABI.Events["Graduated"].ID
+}
+
+type curveGraduation struct {
+	token, manager common.Address
+	log            types.Log
+}
+
+// discoverGraduationSettlements queries only the manager declared by each
+// curve event and only at the exact graduation block. Pair validation is done
+// after discovery because GraduatedV3 has a lower log index than Graduated.
+func (x *Indexer) discoverGraduationSettlements(ctx context.Context, logs []types.Log) ([]types.Log, error) {
+	graduations := []curveGraduation{}
+	queries := map[string]curveGraduation{}
+	for _, l := range logs {
+		if len(l.Topics) == 0 || l.Topics[0] != contractABI.Events["Graduated"].ID {
+			continue
+		}
+		values, err := decodeLog(contractABI, "Graduated", l)
+		if err != nil {
+			return nil, fmt.Errorf("decode curve graduation discovery: %w", err)
+		}
+		token, tokenOK := values["token"].(common.Address)
+		manager, managerOK := values["graduationManager"].(common.Address)
+		if !tokenOK || !managerOK || token == (common.Address{}) || manager == (common.Address{}) {
+			return nil, fmt.Errorf("decode curve graduation discovery: invalid token or manager")
+		}
+		graduation := curveGraduation{token: token, manager: manager, log: l}
+		graduations = append(graduations, graduation)
+		queries[fmt.Sprintf("%d:%s", l.BlockNumber, manager.Hex())] = graduation
+	}
+	if len(graduations) > 32 || len(queries) > 32 {
+		return nil, fmt.Errorf("too many curve graduations in batch for bounded settlement discovery: %d", len(graduations))
+	}
+	queryKeys := make([]string, 0, len(queries))
+	for key := range queries {
+		queryKeys = append(queryKeys, key)
+	}
+	sort.Strings(queryKeys)
+	out := append([]types.Log(nil), logs...)
+	for _, key := range queryKeys {
+		graduation := queries[key]
+		settlements, err := x.rpc.FilterLogs(ctx, ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(graduation.log.BlockNumber),
+			ToBlock:   new(big.Int).SetUint64(graduation.log.BlockNumber),
+			Addresses: []common.Address{graduation.manager},
+			Topics:    [][]common.Hash{{v3GraduationABI.Events["GraduatedV3"].ID}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, settlement := range settlements {
+			if settlement.Address != graduation.manager || settlement.BlockNumber != graduation.log.BlockNumber {
+				return nil, fmt.Errorf("GraduatedV3 discovery returned inconsistent manager or block")
+			}
+		}
+		out = append(out, settlements...)
+	}
+	canonical, err := canonicalLogs(out)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGraduationPairs(canonical); err != nil {
+		return nil, err
+	}
+	return canonical, nil
+}
+
+func validateGraduationPairs(logs []types.Log) error {
+	curves := []curveGraduation{}
+	settlements := []struct {
+		token common.Address
+		log   types.Log
+	}{}
+	for _, l := range logs {
+		if len(l.Topics) == 0 {
+			continue
+		}
+		switch l.Topics[0] {
+		case contractABI.Events["Graduated"].ID:
+			values, err := decodeLog(contractABI, "Graduated", l)
+			if err != nil {
+				return err
+			}
+			token, tokenOK := values["token"].(common.Address)
+			manager, managerOK := values["graduationManager"].(common.Address)
+			if !tokenOK || !managerOK || token == (common.Address{}) || manager == (common.Address{}) {
+				return fmt.Errorf("invalid curve graduation identity")
+			}
+			curves = append(curves, curveGraduation{token: token, manager: manager, log: l})
+		case v3GraduationABI.Events["GraduatedV3"].ID:
+			values, err := decodeLog(v3GraduationABI, "GraduatedV3", l)
+			if err != nil {
+				return err
+			}
+			token, ok := values["token"].(common.Address)
+			if !ok || token == (common.Address{}) {
+				return fmt.Errorf("invalid GraduatedV3 token")
+			}
+			settlements = append(settlements, struct {
+				token common.Address
+				log   types.Log
+			}{token: token, log: l})
+		}
+	}
+	matchedSettlements := make([]bool, len(settlements))
+	for _, curve := range curves {
+		matches := 0
+		for i, settlement := range settlements {
+			if settlement.log.Address == curve.manager && settlement.token == curve.token && settlement.log.TxHash == curve.log.TxHash && settlement.log.BlockNumber == curve.log.BlockNumber && settlement.log.BlockHash == curve.log.BlockHash {
+				matches++
+				matchedSettlements[i] = true
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("curve graduation tx=%s token=%s has %d matching GraduatedV3 events", curve.log.TxHash.Hex(), curve.token.Hex(), matches)
+		}
+	}
+	for i, matched := range matchedSettlements {
+		if !matched {
+			return fmt.Errorf("unpaired GraduatedV3 tx=%s token=%s manager=%s", settlements[i].log.TxHash.Hex(), settlements[i].token.Hex(), settlements[i].log.Address.Hex())
+		}
+	}
+	return nil
+}
+
+func decodeLog(decoder abi.ABI, event string, l types.Log) (map[string]any, error) {
+	values := map[string]any{}
+	if err := decoder.UnpackIntoMap(values, event, l.Data); err != nil {
+		return nil, err
+	}
+	if err := abi.ParseTopicsIntoMap(values, indexedArguments(decoder.Events[event].Inputs), l.Topics[1:]); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func canonicalLogs(logs []types.Log) ([]types.Log, error) {
+	byIdentity := map[string]types.Log{}
+	for _, l := range logs {
+		key := fmt.Sprintf("%s:%s:%d", l.BlockHash.Hex(), l.TxHash.Hex(), l.Index)
+		if prior, ok := byIdentity[key]; ok {
+			if prior.Address != l.Address || prior.BlockNumber != l.BlockNumber || prior.TxIndex != l.TxIndex || !bytes.Equal(prior.Data, l.Data) || !equalTopics(prior.Topics, l.Topics) {
+				return nil, fmt.Errorf("contradictory logs share canonical identity %s", key)
+			}
+			continue
+		}
+		byIdentity[key] = l
+	}
+	out := make([]types.Log, 0, len(byIdentity))
+	for _, l := range byIdentity {
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].BlockNumber != out[j].BlockNumber {
+			return out[i].BlockNumber < out[j].BlockNumber
+		}
+		if out[i].TxIndex != out[j].TxIndex {
+			return out[i].TxIndex < out[j].TxIndex
+		}
+		return out[i].Index < out[j].Index
+	})
+	return out, nil
+}
+
+func equalTopics(left, right []common.Hash) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 var erc20MetadataABI = func() abi.ABI {

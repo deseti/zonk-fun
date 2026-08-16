@@ -48,7 +48,7 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 func (r *PostgresRepository) requireSchema(ctx context.Context) error {
 	var ready bool
 	e := r.pool.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9]
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.token_metadata_drafts') IS NOT NULL
 		AND to_regclass('public.token_holder_balances') IS NOT NULL
@@ -65,31 +65,60 @@ func (r *PostgresRepository) Close()                         { r.pool.Close() }
 func (r *PostgresRepository) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
 const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.initial_supply,coalesce(t.description,''),coalesce(t.image_url,''),coalesce(t.metadata_url,''),coalesce(t.website_url,''),coalesce(t.x_url,''),coalesce(t.telegram_url,''),coalesce(t.discord_url,''),t.block_number,t.transaction_hash,t.log_index,
- c.curve_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
+ c.curve_address,c.canonical_pool_address,c.curve_supply,c.sold_supply,c.reserve_balance,c.starting_price,c.slope,c.graduation_threshold,c.lifecycle,
  m.trade_count,m.buy_count,m.sell_count,m.volume,m.fees,m.unique_trader_count,m.latest_trade_timestamp,m.current_price,m.fully_diluted_value,m.holder_count,
- g.phase,g.liquidity_token_address,g.token_amount,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
+ g.phase,g.graduation_manager_address,g.token_amount,g.eth_amount,g.sold_supply,g.block_number,g.transaction_hash,g.log_index,
+ le.lp_custodian_address,le.position_token_id,le.liquidity_amount,le.block_number,le.transaction_hash,le.log_index,
+ g.liquidity_token_address,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
  FROM (SELECT DISTINCT ON (token_address) * FROM tokens WHERE chain_id=$1 AND is_canonical ORDER BY token_address,block_number DESC,log_index DESC) t
  LEFT JOIN LATERAL (SELECT * FROM curves c WHERE c.chain_id=$1 AND c.token_address=t.token_address AND c.is_canonical ORDER BY c.block_number DESC,c.log_index DESC LIMIT 1)c ON true
  LEFT JOIN token_metrics m ON m.chain_id=t.chain_id AND m.token_address=t.token_address
- LEFT JOIN LATERAL (SELECT * FROM graduations g WHERE g.chain_id=$1 AND g.token_address=t.token_address AND g.is_canonical ORDER BY g.block_number DESC,g.log_index DESC LIMIT 1)g ON true`
+ LEFT JOIN LATERAL (SELECT * FROM graduations g WHERE g.chain_id=$1 AND lower(g.token_address)=lower(t.token_address) AND g.is_canonical ORDER BY g.block_number DESC,g.log_index DESC LIMIT 1)g ON true
+ LEFT JOIN LATERAL (SELECT * FROM liquidity_events le WHERE le.chain_id=$1 AND lower(le.token_address)=lower(t.token_address) AND le.is_canonical AND le.event_name='GraduatedV3' AND lower(le.transaction_hash)=lower(g.transaction_hash) AND le.block_hash=g.block_hash AND lower(le.graduation_manager_address)=lower(g.graduation_manager_address) ORDER BY le.log_index DESC LIMIT 1)le ON true`
 
 func scanToken(row pgx.Row) (Token, error) {
 	var t Token
-	var caddr, csupply, sold, reserve, start, slope, threshold, life *string
-	var phase, liq, ta, qa, la, lid *string
+	var caddr, poolAddress, csupply, sold, reserve, start, slope, threshold, life *string
+	var phase, manager, ta, ethAmount, graduationSold *string
+	var custodian, positionTokenID, liquidity *string
+	var legacyLiquidityToken, legacyQuote, legacyLiquidity, legacyLockID *string
 	var tc, bc, sc, uniqueTraders, latestTrade, holders *int64
 	var vol, fees, price, fullyDilutedValue *string
-	var unlock *int64
-	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.WebsiteURL, &t.XURL, &t.TelegramURL, &t.DiscordURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &fullyDilutedValue, &holders, &phase, &liq, &ta, &qa, &la, &lid, &unlock)
+	var curveBlock, curveLog, settlementBlock, settlementLog *int64
+	var curveTx, settlementTx *string
+	var legacyUnlock *int64
+	e := row.Scan(&t.Address, &t.Creator, &t.Name, &t.Symbol, &t.InitialSupply, &t.Description, &t.ImageURL, &t.MetadataURL, &t.WebsiteURL, &t.XURL, &t.TelegramURL, &t.DiscordURL, &t.CreatedAt.BlockNumber, &t.CreatedAt.TransactionHash, &t.CreatedAt.LogIndex, &caddr, &poolAddress, &csupply, &sold, &reserve, &start, &slope, &threshold, &life, &tc, &bc, &sc, &vol, &fees, &uniqueTraders, &latestTrade, &price, &fullyDilutedValue, &holders, &phase, &manager, &ta, &ethAmount, &graduationSold, &curveBlock, &curveTx, &curveLog, &custodian, &positionTokenID, &liquidity, &settlementBlock, &settlementTx, &settlementLog, &legacyLiquidityToken, &legacyQuote, &legacyLiquidity, &legacyLockID, &legacyUnlock)
 	if e != nil {
 		return t, e
 	}
 	if caddr != nil {
-		t.Curve = &Curve{Address: *caddr, SoldSupply: value(sold), ReserveBalance: value(reserve), Supply: value(csupply), StartingPrice: value(start), Slope: value(slope), GraduationThreshold: value(threshold), Lifecycle: value(life)}
+		t.Curve = &Curve{Address: *caddr, CanonicalPoolAddress: optionalValue(poolAddress), SoldSupply: value(sold), ReserveBalance: value(reserve), Supply: value(csupply), StartingPrice: value(start), Slope: value(slope), GraduationThreshold: value(threshold), Lifecycle: value(life)}
 	}
 	t.Metrics = Metrics{TradeCount: valueInt(tc), BuyCount: valueInt(bc), SellCount: valueInt(sc), Volume: value(vol), Fees: value(fees), UniqueTraderCount: valueInt(uniqueTraders), LatestTradeTimestamp: latestTrade, CurrentPrice: price, FullyDilutedValue: fullyDilutedValue, HolderCount: holders}
 	if phase != nil {
-		t.Graduation = &Graduation{Phase: *phase, LiquidityToken: value(liq), TokenAmount: value(ta), QuoteAmount: value(qa), LiquidityAmount: value(la), LockID: value(lid), UnlockTimestamp: unlock}
+		graduation := &Graduation{
+			Phase:                    *phase,
+			CanonicalPoolAddress:     optionalValue(poolAddress),
+			GraduationManagerAddress: optionalValue(manager),
+			LPCustodianAddress:       optionalValue(custodian),
+			PositionTokenID:          optionalValue(positionTokenID),
+			Liquidity:                optionalValue(liquidity),
+			TokenAmount:              optionalValue(ta),
+			ETHAmount:                optionalValue(ethAmount),
+			SoldSupply:               optionalValue(graduationSold),
+			LiquidityToken:           legacyLiquidityToken,
+			QuoteAmount:              legacyQuote,
+			LiquidityAmount:          legacyLiquidity,
+			LockID:                   legacyLockID,
+			UnlockTimestamp:          legacyUnlock,
+		}
+		if curveBlock != nil && curveTx != nil && curveLog != nil {
+			graduation.CurveTerminalAt = &BlockRef{BlockNumber: *curveBlock, TransactionHash: *curveTx, LogIndex: *curveLog}
+		}
+		if settlementBlock != nil && settlementTx != nil && settlementLog != nil {
+			graduation.SettledAt = &BlockRef{BlockNumber: *settlementBlock, TransactionHash: *settlementTx, LogIndex: *settlementLog}
+		}
+		t.Graduation = graduation
 	}
 	return t, nil
 }
@@ -143,6 +172,12 @@ func (r *PostgresRepository) FinalizeMetadata(ctx context.Context, chain int64, 
 func value(v *string) string {
 	if v == nil {
 		return "0"
+	}
+	return *v
+}
+func optionalValue(v *string) string {
+	if v == nil {
+		return ""
 	}
 	return *v
 }

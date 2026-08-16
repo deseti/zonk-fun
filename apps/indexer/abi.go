@@ -15,6 +15,17 @@ const eventABI = `[
 
 var contractABI = mustABI()
 var v3TradeABI = mustV3TradeABI()
+var v3GraduationABI = mustV3GraduationABI()
+
+func mustV3GraduationABI() abi.ABI {
+	a, err := abi.JSON(strings.NewReader(`[
+{"type":"event","name":"GraduatedV3","inputs":[{"indexed":true,"name":"token","type":"address"},{"indexed":true,"name":"custodian","type":"address"},{"indexed":true,"name":"tokenId","type":"uint256"},{"indexed":false,"name":"liquidity","type":"uint128"}]}
+]`))
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
 
 func mustV3TradeABI() abi.ABI {
 	a, err := abi.JSON(strings.NewReader(`[

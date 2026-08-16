@@ -216,3 +216,15 @@ func TestTokenDetailReturnsIndexedTokenAndSafeRepositoryError(t *testing.T) {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
+
+func TestTokenDetailOmitsAbsentGraduationSettlementValues(t *testing.T) {
+	address := "0x0000000000000000000000000000000000000001"
+	indexed := Token{Address: address, Creator: "0x0000000000000000000000000000000000000002", Name: "Zonk", Symbol: "ZK", InitialSupply: "1000", Metrics: Metrics{Volume: "0", Fees: "0"}, Graduation: &Graduation{Phase: "graduated", TokenAmount: "200", ETHAmount: "3", SoldSupply: "800"}}
+	r := testHandler(&fakeRepo{token: indexed})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address, nil))
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, `"phase":"graduated"`) || strings.Contains(body, `"liquidity":"0"`) || strings.Contains(body, `"position_token_id":"0"`) || strings.Contains(body, `"liquidity_amount":"0"`) || strings.Contains(body, `"lock_id":"0"`) {
+		t.Fatalf("status=%d body=%s", w.Code, body)
+	}
+}

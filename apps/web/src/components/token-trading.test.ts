@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as contracts from "@/lib/contracts";
-import { activeTradeStateQueryKey, loadActiveTradeState, selectActiveSigner, tradeInvalidationKeys } from "./token-trading";
+import { activeTradeStateQueryKey, loadActiveTradeState, selectActiveSigner, TokenTrading, tradeInvalidationKeys } from "./token-trading";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("trade query refresh", () => {
   it("invalidates balances, pricing, token data, trades, and activity after confirmation", () => {
@@ -33,5 +39,15 @@ describe("trade query refresh", () => {
     expect(selectActiveSigner("external", { embedded, external })).toEqual({ mode: "external", wallet: external });
     expect(() => selectActiveSigner("external", { embedded })).toThrow(/selected external wallet is unavailable/i);
     expect(() => selectActiveSigner("embedded", { external })).toThrow(/embedded smart-wallet client is unavailable/i);
+  });
+
+  it("replaces bonding-curve execution with a deterministic graduated notice", () => {
+    const token = "0x0000000000000000000000000000000000000011" as const;
+    const creator = "0x0000000000000000000000000000000000000022" as const;
+    render(TokenTrading({ tokenAddress: token, creator, symbol: "ZONK", graduated: true }));
+    expect(screen.getByText("Bonding-curve trading has ended. This token now trades through external liquidity.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Get quote" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Buy" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sell" })).toBeNull();
   });
 });

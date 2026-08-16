@@ -14,7 +14,8 @@ import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 
-export function TokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null }) {
+export function TokenTrading({ tokenAddress, symbol, tokenPriceWei, graduated = false }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null; graduated?: boolean }) {
+  if (graduated) return <section className="terminal-panel p-5" aria-label="Bonding-curve trading closed"><span className="badge-violet">Graduated</span><h2 className="mt-3 text-lg font-semibold text-white">External liquidity active</h2><p className="mt-2 text-sm leading-6 text-zinc-400">Bonding-curve trading has ended. This token now trades through external liquidity.</p><p className="mt-3 text-xs leading-5 text-zinc-600">Zonk.fun does not route Uniswap swaps in this phase. Indexed trade history remains available.</p></section>;
   if (!hasPrivyAppId) return <div className="status-box status-warning">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
   return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} tokenPriceWei={tokenPriceWei} />;
 }

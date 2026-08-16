@@ -188,6 +188,125 @@ func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) 
 	}
 }
 
+func TestPostgresCanonicalGraduationPairsCurveAndManagerEvidence(t *testing.T) {
+	url := os.Getenv("API_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
+	}
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	const chain int64 = 84532
+	const block int64 = 499999970
+	const token = "0x0000000000000000000000000000000000000e01"
+	const creator = "0x0000000000000000000000000000000000000e02"
+	const curve = "0x0000000000000000000000000000000000000e03"
+	const pool = "0x0000000000000000000000000000000000000e04"
+	const manager = "0x0000000000000000000000000000000000000e05"
+	const custodian = "0x0000000000000000000000000000000000000e06"
+	const blockHash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee01"
+	const launchTx = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee02"
+	const graduationTx = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee03"
+	const wrongManager = "0x0000000000000000000000000000000000000e07"
+
+	cleanup := func() {
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM liquidity_events WHERE chain_id=$1 AND token_address=$2`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM graduations WHERE chain_id=$1 AND token_address=$2`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM token_metrics WHERE chain_id=$1 AND token_address=$2`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM curves WHERE chain_id=$1 AND token_address=$2`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM tokens WHERE chain_id=$1 AND token_address=$2`, chain, token)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM chain_blocks WHERE chain_id=$1 AND block_hash=$2`, chain, blockHash)
+	}
+	cleanup()
+	defer cleanup()
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,$2,$3,'0xparent',1000)`, chain, block, blockHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,protocol_version,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,'Phase Ten Graduation','P10',1000,'endpoint-cp-v3',$4,$5,$6,1)`, chain, token, creator, block, blockHash, launchTx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO curves(chain_id,token_address,curve_address,creator_address,curve_supply,sold_supply,reserve_balance,graduation_threshold,lifecycle,canonical_pool_address,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,800,800,3,800,'graduated',$5,$6,$7,$8,1)`, chain, token, curve, creator, pool, block, blockHash, launchTx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO token_metrics(chain_id,token_address,trade_count,buy_count,sell_count,volume,fees,unique_trader_count,recent_volume,recent_trade_count,recent_trader_count,block_number,block_hash) VALUES($1,$2,1,1,0,3,0,1,3,1,1,$3,$4)`, chain, token, block, blockHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO graduations(chain_id,token_address,phase,sold_supply,token_amount,graduation_manager_address,eth_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'graduated',800,200,$3,3,$4,$5,$6,8)`, chain, token, manager, block, blockHash, graduationTx); err != nil {
+		t.Fatal(err)
+	}
+	// This canonical row has the same token and transaction but the wrong
+	// manager. The repository must never pair it with the curve evidence.
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO liquidity_events(chain_id,token_address,event_name,graduation_manager_address,lp_custodian_address,position_token_id,liquidity_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'GraduatedV3',$3,$4,999,9999,$5,$6,$7,6)`, chain, token, wrongManager, custodian, block, blockHash, graduationTx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO liquidity_events(chain_id,token_address,event_name,graduation_manager_address,lp_custodian_address,position_token_id,liquidity_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'GraduatedV3',$3,$4,77,1234,$5,$6,$7,7)`, chain, token, manager, custodian, block, blockHash, graduationTx); err != nil {
+		t.Fatal(err)
+	}
+
+	assertGraduation := func(label string, item Token) {
+		t.Helper()
+		g := item.Graduation
+		if g == nil || g.Phase != "graduated" || g.CanonicalPoolAddress != pool || g.GraduationManagerAddress != manager || g.LPCustodianAddress != custodian || g.PositionTokenID != "77" || g.Liquidity != "1234" || g.TokenAmount != "200" || g.ETHAmount != "3" || g.SoldSupply != "800" || g.CurveTerminalAt == nil || g.CurveTerminalAt.BlockNumber != block || g.CurveTerminalAt.TransactionHash != graduationTx || g.CurveTerminalAt.LogIndex != 8 || g.SettledAt == nil || g.SettledAt.BlockNumber != block || g.SettledAt.TransactionHash != graduationTx || g.SettledAt.LogIndex != 7 {
+			t.Fatalf("%s graduation=%+v", label, g)
+		}
+		if g.LiquidityToken != nil || g.QuoteAmount != nil || g.LiquidityAmount != nil || g.LockID != nil || g.UnlockTimestamp != nil {
+			t.Fatalf("%s fabricated legacy values=%+v", label, g)
+		}
+	}
+	find := func(items []Token) Token {
+		t.Helper()
+		for _, item := range items {
+			if strings.EqualFold(item.Address, token) {
+				return item
+			}
+		}
+		t.Fatalf("fixture token missing from %v", items)
+		return Token{}
+	}
+	detail, err := repo.Token(ctx, chain, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGraduation("detail", detail)
+	listed, err := repo.ListTokens(ctx, chain, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGraduation("list", find(listed.Items))
+	searched, err := repo.SearchTokens(ctx, chain, "phase ten", 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGraduation("search", find(searched.Items))
+	trending, err := repo.TrendingTokens(ctx, chain, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGraduation("trending", find(trending.Items))
+	created, err := repo.CreatorTokens(ctx, chain, creator, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGraduation("creator", find(created.Items))
+
+	// Removing the matching canonical settlement must not make the repository
+	// borrow the wrong-manager row or synthesize zero settlement values.
+	if _, err = repo.pool.Exec(ctx, `UPDATE liquidity_events SET is_canonical=false,orphaned_at=now() WHERE chain_id=$1 AND token_address=$2 AND graduation_manager_address=$3`, chain, token, manager); err != nil {
+		t.Fatal(err)
+	}
+	detail, err = repo.Token(ctx, chain, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Graduation == nil || detail.Graduation.Phase != "graduated" || detail.Graduation.SettledAt != nil || detail.Graduation.LPCustodianAddress != "" || detail.Graduation.PositionTokenID != "" || detail.Graduation.Liquidity != "" {
+		t.Fatalf("absent canonical settlement was fabricated or mispaired: %+v", detail.Graduation)
+	}
+}
+
 func TestPostgresRepositoryIndexedData(t *testing.T) {
 	url := os.Getenv("API_TEST_DATABASE_URL")
 	if url == "" {
