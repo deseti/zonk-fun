@@ -109,6 +109,137 @@ func TestV3TransferAnalyticsAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestV3LaunchReplayPreservesFinalizedMetadata(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	tokenHash, creatorHash, curveHash := common.HexToHash("0x1101"), common.HexToHash("0x1102"), common.HexToHash("0x1103")
+	token := common.BytesToAddress(tokenHash.Bytes()).Hex()
+	creator := common.BytesToAddress(creatorHash.Bytes()).Hex()
+	b := &types.Header{Number: big.NewInt(12), Time: 8000}
+	logs := stamp(b, v3Launch(t, tokenHash, creatorHash, curveHash))
+	metadata := map[string]TokenMetadata{token: {Name: "Durable Metadata", Symbol: "DURA", Decimals: 18}}
+
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-metadata-replay", b, logs, metadata); err != nil {
+		t.Fatal(err)
+	}
+	assertApplicationMetadata(t, s, token, applicationMetadata{})
+
+	finalized := applicationMetadata{
+		Description: "metadata survives canonical replay",
+		ImageURL:    "/objects/images/durable.png",
+		MetadataURL: "/objects/metadata/durable.json",
+		WebsiteURL:  "https://zonk.fun/durable",
+		XURL:        "https://x.com/zonk_durable",
+		TelegramURL: "https://t.me/zonk_durable",
+		DiscordURL:  "https://discord.gg/zonk-durable",
+	}
+	// This is the same application-owned UPDATE performed by the API's
+	// FinalizeMetadata transaction after it verifies canonical launch identity.
+	if _, err := s.pool.Exec(ctx, `UPDATE tokens SET description=$2,image_url=$3,metadata_url=$4,website_url=$5,x_url=$6,telegram_url=$7,discord_url=$8 WHERE chain_id=$1 AND token_address=$9`, BaseSepoliaChainID, finalized.Description, finalized.ImageURL, finalized.MetadataURL, finalized.WebsiteURL, finalized.XURL, finalized.TelegramURL, finalized.DiscordURL, token); err != nil {
+		t.Fatal(err)
+	}
+	assertApplicationMetadata(t, s, token, finalized)
+
+	for replay := 0; replay < 2; replay++ {
+		if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-metadata-replay", b, logs, metadata); err != nil {
+			t.Fatal(err)
+		}
+		assertApplicationMetadata(t, s, token, finalized)
+	}
+
+	var count int64
+	var gotToken, gotCreator, name, symbol, supply, protocol, blockHash, txHash string
+	var blockNumber, logIndex int64
+	var canonical bool
+	var orphanedAt any
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM tokens WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3`, BaseSepoliaChainID, logs[0].TxHash.Hex(), logs[0].Index).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT token_address,creator_address,name,symbol,initial_supply::text,protocol_version,block_number,block_hash,transaction_hash,log_index,is_canonical,orphaned_at FROM tokens WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3`, BaseSepoliaChainID, logs[0].TxHash.Hex(), logs[0].Index).Scan(&gotToken, &gotCreator, &name, &symbol, &supply, &protocol, &blockNumber, &blockHash, &txHash, &logIndex, &canonical, &orphanedAt); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || gotToken != token || gotCreator != creator || name != "Durable Metadata" || symbol != "DURA" || supply != "1000" || protocol != "endpoint-cp-v3" || blockNumber != int64(b.Number.Uint64()) || blockHash != b.Hash().Hex() || txHash != logs[0].TxHash.Hex() || logIndex != int64(logs[0].Index) || !canonical || orphanedAt != nil {
+		t.Fatalf("launch projection count=%d token=%s creator=%s name=%s symbol=%s supply=%s protocol=%s block=%d/%s tx=%s index=%d canonical=%t orphaned=%v", count, gotToken, gotCreator, name, symbol, supply, protocol, blockNumber, blockHash, txHash, logIndex, canonical, orphanedAt)
+	}
+}
+
+func TestV3LaunchReorgIdentityChangeDoesNotCarryFinalizedMetadata(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	oldToken, newToken := common.HexToHash("0x1201"), common.HexToHash("0x1202")
+	oldCreator, newCreator := common.HexToHash("0x1203"), common.HexToHash("0x1204")
+	oldCurve, newCurve := common.HexToHash("0x1205"), common.HexToHash("0x1206")
+	oldAddress := common.BytesToAddress(oldToken.Bytes()).Hex()
+	newAddress := common.BytesToAddress(newToken.Bytes()).Hex()
+	oldBlock := &types.Header{Number: big.NewInt(13), Time: 8100}
+	oldLogs := stamp(oldBlock, v3Launch(t, oldToken, oldCreator, oldCurve))
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-metadata-reorg", oldBlock, oldLogs, map[string]TokenMetadata{oldAddress: {Name: "Old Launch", Symbol: "OLD", Decimals: 18}}); err != nil {
+		t.Fatal(err)
+	}
+	finalized := applicationMetadata{Description: "old metadata", ImageURL: "/objects/old.png", MetadataURL: "/objects/old.json", WebsiteURL: "https://old.example", XURL: "https://x.com/old", TelegramURL: "https://t.me/old", DiscordURL: "https://discord.gg/old"}
+	if _, err := s.pool.Exec(ctx, `UPDATE tokens SET description=$2,image_url=$3,metadata_url=$4,website_url=$5,x_url=$6,telegram_url=$7,discord_url=$8 WHERE chain_id=$1 AND token_address=$9`, BaseSepoliaChainID, finalized.Description, finalized.ImageURL, finalized.MetadataURL, finalized.WebsiteURL, finalized.XURL, finalized.TelegramURL, finalized.DiscordURL, oldAddress); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := &types.Header{Number: big.NewInt(13), Time: 8200, Nonce: types.EncodeNonce(7)}
+	replacementLogs := stamp(replacement, v3Launch(t, newToken, newCreator, newCurve))
+	// A transaction can be re-included after a reorg. Keep its event identity
+	// while changing decoded launch identity to prove stale metadata is not copied.
+	replacementLogs[0].TxHash = oldLogs[0].TxHash
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-metadata-reorg", replacement, replacementLogs, map[string]TokenMetadata{newAddress: {Name: "New Launch", Symbol: "NEW", Decimals: 18}}); err != nil {
+		t.Fatal(err)
+	}
+	assertApplicationMetadata(t, s, newAddress, applicationMetadata{})
+
+	var count int64
+	var gotToken, gotCreator, name, symbol, supply, protocol, blockHash string
+	var canonical bool
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM tokens WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3`, BaseSepoliaChainID, oldLogs[0].TxHash.Hex(), oldLogs[0].Index).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT token_address,creator_address,name,symbol,initial_supply::text,protocol_version,block_hash,is_canonical FROM tokens WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3`, BaseSepoliaChainID, oldLogs[0].TxHash.Hex(), oldLogs[0].Index).Scan(&gotToken, &gotCreator, &name, &symbol, &supply, &protocol, &blockHash, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || gotToken != newAddress || gotCreator != common.BytesToAddress(newCreator.Bytes()).Hex() || name != "New Launch" || symbol != "NEW" || supply != "1000" || protocol != "endpoint-cp-v3" || blockHash != replacement.Hash().Hex() || !canonical {
+		t.Fatalf("replacement projection count=%d token=%s creator=%s name=%s symbol=%s supply=%s protocol=%s block=%s canonical=%t", count, gotToken, gotCreator, name, symbol, supply, protocol, blockHash, canonical)
+	}
+}
+
+type applicationMetadata struct {
+	Description string
+	ImageURL    string
+	MetadataURL string
+	WebsiteURL  string
+	XURL        string
+	TelegramURL string
+	DiscordURL  string
+}
+
+func assertApplicationMetadata(t *testing.T, s *Store, token string, want applicationMetadata) {
+	t.Helper()
+	var description, imageURL, metadataURL, websiteURL, xURL, telegramURL, discordURL *string
+	if err := s.pool.QueryRow(context.Background(), `SELECT description,image_url,metadata_url,website_url,x_url,telegram_url,discord_url FROM tokens WHERE chain_id=$1 AND token_address=$2`, BaseSepoliaChainID, token).Scan(&description, &imageURL, &metadataURL, &websiteURL, &xURL, &telegramURL, &discordURL); err != nil {
+		t.Fatal(err)
+	}
+	if want == (applicationMetadata{}) {
+		if description != nil || imageURL != nil || metadataURL != nil || websiteURL != nil || xURL != nil || telegramURL != nil || discordURL != nil {
+			t.Fatalf("application metadata must be NULL for an unfinalized launch: description=%v image=%v metadata=%v website=%v x=%v telegram=%v discord=%v", description, imageURL, metadataURL, websiteURL, xURL, telegramURL, discordURL)
+		}
+		return
+	}
+	got := applicationMetadata{stringValue(description), stringValue(imageURL), stringValue(metadataURL), stringValue(websiteURL), stringValue(xURL), stringValue(telegramURL), stringValue(discordURL)}
+	if got != want {
+		t.Fatalf("application metadata=%+v want=%+v", got, want)
+	}
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 func TestV3HourlyOHLCUsesCanonicalTradeOrder(t *testing.T) {
 	s := integrationStore(t)
 	ctx := context.Background()
