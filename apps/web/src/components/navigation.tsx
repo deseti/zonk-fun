@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { hasPrivyAppId } from "@/lib/wallet";
+import { HeaderTokenSearch } from "./header-token-search";
 import { PrivyWalletUnavailable, WalletStatus } from "./wallet-status";
 
 const links = [
@@ -16,22 +17,26 @@ export function Navigation() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  return <header className="sticky top-0 z-50 border-b border-white/8 bg-[#05090f]/90 backdrop-blur-xl">
-    <div className="container">
-      <div className="flex min-h-16 items-center justify-between gap-3">
+  return <header className="sticky top-0 z-50 border-b border-white/8 bg-[#05090f]/94 backdrop-blur-xl">
+    <div className="market-container">
+      <div className="grid min-h-16 grid-cols-[auto_1fr_auto] items-center gap-3">
         <Link href="/" className="flex min-h-11 items-center gap-2 rounded-lg text-xl font-semibold tracking-[-0.04em] text-white" onClick={() => setOpen(false)} aria-label="Zonk.fun home">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-300/25 bg-cyan-300/10 text-sm font-bold text-cyan-200">Z</span>
           <span>zonk<span className="text-cyan-300">.fun</span></span>
         </Link>
-        <nav className="hidden items-center gap-1 rounded-xl border border-white/8 bg-white/[0.025] p-1 text-sm lg:flex" aria-label="Primary navigation">
-          {links.map((link) => <NavLink key={link.href} {...link} active={isActive(pathname, link.href)} />)}
-        </nav>
-        <div className="hidden min-w-0 justify-end lg:flex">{hasPrivyAppId ? <WalletStatus /> : <PrivyWalletUnavailable />}</div>
-        <div className="lg:hidden"><button className="button-secondary h-11 w-11 p-0" type="button" aria-expanded={open} aria-controls="mobile-navigation" aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpen((current) => !current)}>
+        <div className="mx-auto hidden w-full max-w-xl px-2 md:block"><HeaderTokenSearch id="desktop-token-search" /></div>
+        <div className="hidden items-center justify-end gap-2 xl:flex">
+          <nav className="flex items-center gap-0.5 text-sm" aria-label="Primary navigation">
+            {links.map((link) => <NavLink key={link.href} {...link} active={isActive(pathname, link.href)} />)}
+          </nav>
+          <div className="hidden min-w-0 xl:flex">{hasPrivyAppId ? <WalletStatus /> : <PrivyWalletUnavailable />}</div>
+        </div>
+        <div className="xl:hidden"><button className="button-secondary h-11 w-11 p-0" type="button" aria-expanded={open} aria-controls="mobile-navigation" aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpen((current) => !current)}>
           <span aria-hidden className="text-xl leading-none">{open ? "×" : "≡"}</span>
         </button></div>
       </div>
-      {open && <div id="mobile-navigation" className="border-t border-white/8 py-3 lg:hidden">
+      <div className="pb-2.5 md:hidden"><HeaderTokenSearch id="mobile-token-search" /></div>
+      {open && <div id="mobile-navigation" className="border-t border-white/8 py-3 xl:hidden">
         <nav className="grid grid-cols-3 gap-2" aria-label="Mobile navigation">
           {links.map((link) => <NavLink key={link.href} {...link} active={isActive(pathname, link.href)} onClick={() => setOpen(false)} />)}
         </nav>
