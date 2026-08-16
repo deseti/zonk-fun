@@ -17,6 +17,9 @@ type Token struct {
 	Curve         *Curve      `json:"curve,omitempty"`
 	Metrics       Metrics     `json:"metrics"`
 	Graduation    *Graduation `json:"graduation,omitempty"`
+	// LatestTradeSource is an internal provenance field used by the pricing
+	// endpoint; it is intentionally not part of the public token contract.
+	LatestTradeSource *string `json:"-"`
 }
 type MetadataDraft struct {
 	ID            string `json:"draft_id"`
@@ -115,24 +118,27 @@ type Pricing struct {
 	Source            string  `json:"source"`
 }
 type Trade struct {
-	TokenAddress    string `json:"token_address"`
-	Trader          string `json:"trader"`
-	Side            string `json:"side"`
-	TokenAmount     string `json:"token_amount"`
-	ReserveAmount   string `json:"reserve_amount"`
-	CurveValue      string `json:"curve_value"`
-	ProtocolFee     string `json:"protocol_fee"`
-	CreatorFee      string `json:"creator_fee"`
-	BlockNumber     int64  `json:"block_number"`
-	TransactionHash string `json:"transaction_hash"`
-	LogIndex        int64  `json:"log_index"`
+	TokenAddress     string `json:"token_address"`
+	Trader           string `json:"trader"`
+	Side             string `json:"side"`
+	TokenAmount      string `json:"token_amount"`
+	ReserveAmount    string `json:"reserve_amount"`
+	CurveValue       string `json:"curve_value"`
+	ProtocolFee      string `json:"protocol_fee"`
+	CreatorFee       string `json:"creator_fee"`
+	Source           string `json:"source"`
+	BlockNumber      int64  `json:"block_number"`
+	TransactionIndex int64  `json:"transaction_index"`
+	TransactionHash  string `json:"transaction_hash"`
+	LogIndex         int64  `json:"log_index"`
 }
 type Activity struct {
-	EventName       string         `json:"event_name"`
-	Decoded         map[string]any `json:"decoded"`
-	BlockNumber     int64          `json:"block_number"`
-	TransactionHash string         `json:"transaction_hash"`
-	LogIndex        int64          `json:"log_index"`
+	EventName        string         `json:"event_name"`
+	Decoded          map[string]any `json:"decoded"`
+	BlockNumber      int64          `json:"block_number"`
+	TransactionIndex int64          `json:"transaction_index"`
+	TransactionHash  string         `json:"transaction_hash"`
+	LogIndex         int64          `json:"log_index"`
 }
 type CreatorProfile struct {
 	Address    string  `json:"address"`

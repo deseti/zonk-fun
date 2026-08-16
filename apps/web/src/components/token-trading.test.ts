@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as contracts from "@/lib/contracts";
 import { activeTradeStateQueryKey, loadActiveTradeState, selectActiveSigner, TokenTrading, tradeInvalidationKeys } from "./token-trading";
 
+vi.mock("@/components/graduated-token-swap", () => ({ GraduatedTokenSwap: () => "Swap terminal" }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -41,13 +43,11 @@ describe("trade query refresh", () => {
     expect(() => selectActiveSigner("embedded", { external })).toThrow(/embedded smart-wallet client is unavailable/i);
   });
 
-  it("replaces bonding-curve execution with a deterministic graduated notice", () => {
+  it("renders the isolated V3 swap terminal for graduated tokens", () => {
     const token = "0x0000000000000000000000000000000000000011" as const;
     const creator = "0x0000000000000000000000000000000000000022" as const;
     render(TokenTrading({ tokenAddress: token, creator, symbol: "ZONK", graduated: true }));
-    expect(screen.getByText("Bonding-curve trading has ended. This token now trades through external liquidity.")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Get quote" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Buy" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Sell" })).toBeNull();
+    expect(screen.getByText("Swap terminal")).toBeTruthy();
+    expect(screen.queryByText("External liquidity active")).toBeNull();
   });
 });

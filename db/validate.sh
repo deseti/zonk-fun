@@ -57,7 +57,7 @@ for database in empty_test existing_test; do
   docker exec -e DATABASE_URL="$database_url" "$container_name" /bin/sh /zonk-db/migrate.sh >/dev/null
   docker exec "$container_name" psql -v ON_ERROR_STOP=1 -U zonk_test -d "$database" -tAc "
     DO \$\$ BEGIN
-      IF (SELECT array_agg(version ORDER BY version) FROM schema_migrations) IS DISTINCT FROM ARRAY[1,2,3,4,5,6,7,8,9] THEN RAISE EXCEPTION 'migration versions invalid'; END IF;
+      IF (SELECT array_agg(version ORDER BY version) FROM schema_migrations) IS DISTINCT FROM ARRAY[1,2,3,4,5,6,7,8,9,10] THEN RAISE EXCEPTION 'migration versions invalid'; END IF;
 
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='graduations' AND column_name='orphaned_at') THEN RAISE EXCEPTION 'orphaned_at missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='token_metrics' AND column_name='current_price') THEN RAISE EXCEPTION 'current_price missing'; END IF;
@@ -68,6 +68,9 @@ for database in empty_test existing_test; do
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='curves' AND column_name='canonical_pool_address') THEN RAISE EXCEPTION 'canonical pool column missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='graduations' AND column_name='graduation_manager_address') THEN RAISE EXCEPTION 'graduation manager column missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='graduations' AND column_name='eth_amount') THEN RAISE EXCEPTION 'graduation ETH column missing'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='chain_events' AND column_name='transaction_index') THEN RAISE EXCEPTION 'chain event transaction index missing'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='trades' AND column_name='transaction_index') THEN RAISE EXCEPTION 'trade transaction index missing'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='trades' AND column_name='source') THEN RAISE EXCEPTION 'trade source missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='liquidity_events' AND column_name='graduation_manager_address') THEN RAISE EXCEPTION 'settlement graduation manager column missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='liquidity_events' AND column_name='lp_custodian_address') THEN RAISE EXCEPTION 'LP custodian column missing'; END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='liquidity_events' AND column_name='position_token_id') THEN RAISE EXCEPTION 'position token ID column missing'; END IF;

@@ -52,7 +52,7 @@ export default function TokenDetailPage() {
           <div className="terminal-chart"><TokenChart tokenAddress={address} initialSupply={token.initial_supply} className="" /></div>
         </div>
         <div className="token-terminal-sidebar">
-          <div className="terminal-trade"><TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} tokenPriceWei={token.metrics.current_price} graduated={graduated} /></div>
+          <div className="terminal-trade"><TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} tokenPriceWei={token.metrics.current_price} graduated={graduated} canonicalPoolAddress={(token.graduation?.canonical_pool_address || token.curve?.canonical_pool_address) as `0x${string}` | undefined} /></div>
         </div>
         <div className="token-terminal-support">
           <aside className="terminal-market"><MarketOverview token={token} onchain={onchain} reference={reference} /></aside>

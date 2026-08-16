@@ -16,6 +16,13 @@ type RPC interface {
 	FilterLogs(context.Context, ethereum.FilterQuery) ([]types.Log, error)
 	CallContract(context.Context, ethereum.CallMsg, *big.Int) ([]byte, error)
 }
+
+// transactionSenderRPC is optional so existing deterministic projection tests
+// can continue to use a minimal RPC fake. The production ethclient implements
+// it and supplies the wallet sender for router-emitted pool Swap events.
+type transactionSenderRPC interface {
+	TransactionByHash(context.Context, common.Hash) (*types.Transaction, bool, error)
+}
 type TokenMetadata struct {
 	Name, Symbol string
 	Decimals     uint8

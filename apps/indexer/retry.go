@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -69,6 +70,16 @@ func (r *RetryingRPC) CallContract(ctx context.Context, msg ethereum.CallMsg, bl
 	var out []byte
 	err := r.call(ctx, func() error { var e error; out, e = r.inner.CallContract(ctx, msg, block); return e })
 	return out, err
+}
+func (r *RetryingRPC) TransactionByHash(ctx context.Context, hash common.Hash) (*types.Transaction, bool, error) {
+	provider, ok := r.inner.(transactionSenderRPC)
+	if !ok {
+		return nil, false, fmt.Errorf("transaction sender RPC is unavailable")
+	}
+	var out *types.Transaction
+	var pending bool
+	err := r.call(ctx, func() error { var e error; out, pending, e = provider.TransactionByHash(ctx, hash); return e })
+	return out, pending, err
 }
 func (r *RetryingRPC) call(ctx context.Context, fn func() error) error {
 	var last error

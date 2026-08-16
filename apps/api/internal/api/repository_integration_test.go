@@ -3,17 +3,13 @@ package api
 import (
 	"context"
 	"math/big"
-	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestPostgresRepositoryRejectsUnpreparedSchema(t *testing.T) {
-	url := os.Getenv("UNPREPARED_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set UNPREPARED_TEST_DATABASE_URL to run schema gate test")
-	}
+	url := integrationDatabaseURL(t, "UNPREPARED_TEST_DATABASE_URL")
 	repo, err := NewPostgresRepository(context.Background(), url)
 	if err == nil {
 		repo.Close()
@@ -25,10 +21,7 @@ func TestPostgresRepositoryRejectsUnpreparedSchema(t *testing.T) {
 }
 
 func TestPostgresChartAggregatesExactCanonicalTradesAtUTCBoundaries(t *testing.T) {
-	url := os.Getenv("API_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
-	}
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()
 	repo, err := NewPostgresRepository(ctx, url)
 	if err != nil {
@@ -127,10 +120,7 @@ func exactCurvePrice(t *testing.T, soldSupply, reserveBalance string) string {
 }
 
 func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) {
-	url := os.Getenv("API_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
-	}
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()
 	repo, err := NewPostgresRepository(ctx, url)
 	if err != nil {
@@ -189,10 +179,7 @@ func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) 
 }
 
 func TestPostgresCanonicalGraduationPairsCurveAndManagerEvidence(t *testing.T) {
-	url := os.Getenv("API_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
-	}
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()
 	repo, err := NewPostgresRepository(ctx, url)
 	if err != nil {
@@ -308,10 +295,7 @@ func TestPostgresCanonicalGraduationPairsCurveAndManagerEvidence(t *testing.T) {
 }
 
 func TestPostgresRepositoryIndexedData(t *testing.T) {
-	url := os.Getenv("API_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
-	}
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()
 	repo, e := NewPostgresRepository(ctx, url)
 	if e != nil {
@@ -366,10 +350,7 @@ func TestPostgresRepositoryIndexedData(t *testing.T) {
 }
 
 func TestPostgresRepositoryKeysetPagination(t *testing.T) {
-	url := os.Getenv("API_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("set API_TEST_DATABASE_URL to run PostgreSQL API integration tests")
-	}
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()
 	repo, e := NewPostgresRepository(ctx, url)
 	if e != nil {

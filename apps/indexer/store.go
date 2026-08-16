@@ -26,6 +26,8 @@ func (s *Store) ScanContracts(ctx context.Context, chain int64, configured []com
 		SELECT DISTINCT curve_address AS address FROM curves WHERE chain_id=$1 AND is_canonical AND curve_address <> ''
 		UNION
 		SELECT DISTINCT token_address AS address FROM tokens WHERE chain_id=$1 AND is_canonical AND token_address <> ''
+		UNION
+		SELECT DISTINCT canonical_pool_address AS address FROM curves WHERE chain_id=$1 AND is_canonical AND canonical_pool_address <> ''
 	) known`, chain)
 	if err != nil {
 		return nil, err
@@ -60,7 +62,7 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 	}
 	var ready bool
 	e = p.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9,10]
 		AND to_regclass('public.chain_events') IS NOT NULL
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.curves') IS NOT NULL`).Scan(&ready)
@@ -135,9 +137,12 @@ func (s *Store) Rewind(ctx context.Context, chain int64, name string, from uint6
 	return tx.Commit(ctx)
 }
 func (s *Store) Apply(ctx context.Context, chain int64, name string, b *types.Header, logs []types.Log) error {
-	return s.ApplyWithMetadata(ctx, chain, name, b, logs, nil)
+	return s.ApplyWithMetadataAndSenders(ctx, chain, name, b, logs, nil, nil)
 }
 func (s *Store) ApplyWithMetadata(ctx context.Context, chain int64, name string, b *types.Header, logs []types.Log, metadata map[string]TokenMetadata) error {
+	return s.ApplyWithMetadataAndSenders(ctx, chain, name, b, logs, metadata, nil)
+}
+func (s *Store) ApplyWithMetadataAndSenders(ctx context.Context, chain int64, name string, b *types.Header, logs []types.Log, metadata map[string]TokenMetadata, senders map[common.Hash]common.Address) error {
 	if e := validateGraduationPairs(logs); e != nil {
 		return e
 	}
@@ -166,7 +171,7 @@ func (s *Store) ApplyWithMetadata(ctx context.Context, chain int64, name string,
 		if l.BlockNumber != b.Number.Uint64() || l.BlockHash != b.Hash() {
 			return fmt.Errorf("log provenance does not match block header: block=%d tx=%s log_index=%d", l.BlockNumber, l.TxHash.Hex(), l.Index)
 		}
-		if e = insertEvent(ctx, tx, chain, l, metadata); e != nil {
+		if e = insertEvent(ctx, tx, chain, l, metadata, senders); e != nil {
 			return e
 		}
 	}
@@ -191,13 +196,13 @@ func rebuildMetricsTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 	}
 	_, e := tx.Exec(ctx, `WITH stats AS (
 		SELECT chain_id,token_address,count(*) trade_count,count(*) FILTER (WHERE side='buy') buy_count,
-			count(*) FILTER (WHERE side='sell') sell_count,coalesce(sum(curve_value),0) volume,
+			count(*) FILTER (WHERE side='sell') sell_count,coalesce(sum(CASE WHEN source='uniswap_v3' THEN reserve_amount ELSE curve_value END),0) volume,
 			coalesce(sum(protocol_fee+creator_fee),0) fees
 		FROM trades WHERE chain_id=$1 AND is_canonical GROUP BY chain_id,token_address
 	), latest AS (
 		SELECT DISTINCT ON (chain_id,token_address) chain_id,token_address,block_number,block_hash,transaction_hash,log_index
 		FROM trades WHERE chain_id=$1 AND is_canonical
-		ORDER BY chain_id,token_address,block_number DESC,log_index DESC
+		ORDER BY chain_id,token_address,block_number DESC,transaction_index DESC,log_index DESC
 	)
 	INSERT INTO token_metrics(chain_id,token_address,trade_count,buy_count,sell_count,volume,fees,block_number,block_hash,transaction_hash,log_index,updated_at)
 	SELECT s.chain_id,s.token_address,s.trade_count,s.buy_count,s.sell_count,s.volume,s.fees,l.block_number,l.block_hash,l.transaction_hash,l.log_index,now()
@@ -214,7 +219,7 @@ func rebuildCurveStateTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 	if _, e := tx.Exec(ctx, `UPDATE curves c SET sold_supply=q.sold_supply,reserve_balance=q.reserve_balance FROM (
 		SELECT chain_id,token_address,sum(CASE WHEN side='buy' THEN token_amount ELSE -token_amount END) sold_supply,
 			sum(CASE WHEN side='buy' THEN curve_value ELSE -curve_value END) reserve_balance
-		FROM trades WHERE chain_id=$1 AND is_canonical GROUP BY chain_id,token_address
+		FROM trades WHERE chain_id=$1 AND is_canonical AND source='curve' GROUP BY chain_id,token_address
 	) q WHERE c.chain_id=q.chain_id AND c.token_address=q.token_address AND c.is_canonical`, chain); e != nil {
 		return e
 	}
@@ -294,7 +299,7 @@ func rebuildAnalyticsTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 	if _, e := tx.Exec(ctx, `WITH anchor AS (
 		SELECT max(block_timestamp) timestamp FROM chain_blocks WHERE chain_id=$1 AND is_canonical
 	), recent AS (
-		SELECT lower(t.token_address) token_address,count(*) trade_count,coalesce(sum(t.curve_value),0) volume,
+		SELECT lower(t.token_address) token_address,count(*) trade_count,coalesce(sum(CASE WHEN t.source='uniswap_v3' THEN t.reserve_amount ELSE t.curve_value END),0) volume,
 			count(DISTINCT lower(t.trader_address)) trader_count
 		FROM trades t JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
 		CROSS JOIN anchor a
@@ -320,45 +325,62 @@ func rebuildAnalyticsTx(ctx context.Context, tx pgx.Tx, chain int64) error {
 		SELECT token_address, ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) price, initial_supply
 		FROM state WHERE sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
 	)
-	UPDATE token_metrics m SET current_price=p.price,fully_diluted_value=floor(p.price*p.initial_supply/1000000000000000000::numeric)
-	FROM prices p WHERE m.chain_id=$1 AND lower(m.token_address)=p.token_address`, chain); e != nil {
+		UPDATE token_metrics m SET current_price=p.price,fully_diluted_value=floor(p.price*p.initial_supply/1000000000000000000::numeric)
+		FROM prices p WHERE m.chain_id=$1 AND lower(m.token_address)=p.token_address`, chain); e != nil {
+		return e
+	}
+	// Once a canonical post-graduation execution exists, its actual Swap
+	// amounts become the indexed market price instead of the terminal curve
+	// formula. The ratio is integer-only and uses WETH wei per whole token.
+	if _, e := tx.Exec(ctx, `WITH latest AS (
+		SELECT DISTINCT ON (lower(t.token_address)) lower(t.token_address) token_address,
+			floor(t.reserve_amount * 1000000000000000000::numeric / NULLIF(t.token_amount,0)) price
+		FROM trades t WHERE t.chain_id=$1 AND t.is_canonical AND t.source='uniswap_v3'
+		ORDER BY lower(t.token_address),t.block_number DESC,t.transaction_index DESC,t.log_index DESC
+	), supplies AS (
+		SELECT lower(token_address) token_address,initial_supply FROM tokens WHERE chain_id=$1 AND is_canonical
+	)
+	UPDATE token_metrics m SET current_price=l.price,fully_diluted_value=floor(l.price*s.initial_supply/1000000000000000000::numeric)
+	FROM latest l JOIN supplies s USING(token_address)
+	WHERE m.chain_id=$1 AND lower(m.token_address)=l.token_address`, chain); e != nil {
 		return e
 	}
 	if _, e := tx.Exec(ctx, `DELETE FROM token_trade_buckets WHERE chain_id=$1`, chain); e != nil {
 		return e
 	}
-	// A bucket close is derived from the curve state after its final canonical
-	// trade. EVM log_index provides the canonical event order within a block.
+	// Curve state advances only for curve trades. Post-graduation candles use
+	// each Swap's executed WETH/token ratio, preserving chain order across the
+	// graduation boundary.
 	_, e := tx.Exec(ctx, `WITH ordered AS (
-		SELECT lower(t.token_address) token_address,(b.block_timestamp / 3600) * 3600 bucket_start,t.side,t.token_amount,t.curve_value,t.trader_address,t.block_number,t.block_hash,t.transaction_hash,t.log_index,
-			sum(CASE WHEN t.side='buy' THEN t.token_amount ELSE -t.token_amount END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.log_index,t.transaction_hash) sold_supply,
-			sum(CASE WHEN t.side='buy' THEN t.curve_value ELSE -t.curve_value END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.log_index,t.transaction_hash) reserve_balance
+		SELECT lower(t.token_address) token_address,(b.block_timestamp / 3600) * 3600 bucket_start,t.side,t.source,t.token_amount,t.reserve_amount,t.curve_value,t.trader_address,t.block_number,t.block_hash,t.transaction_hash,t.transaction_index,t.log_index,
+			sum(CASE WHEN t.source='curve' AND t.side='buy' THEN t.token_amount WHEN t.source='curve' AND t.side='sell' THEN -t.token_amount ELSE 0 END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.transaction_index,t.log_index,t.transaction_hash) sold_supply,
+			sum(CASE WHEN t.source='curve' AND t.side='buy' THEN t.curve_value WHEN t.source='curve' AND t.side='sell' THEN -t.curve_value ELSE 0 END) OVER (PARTITION BY lower(t.token_address) ORDER BY t.block_number,t.transaction_index,t.log_index,t.transaction_hash) reserve_balance
 		FROM trades t JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
 		WHERE t.chain_id=$1 AND t.is_canonical
+	), priced AS (
+		SELECT *,CASE WHEN source='uniswap_v3' THEN floor(reserve_amount * 1000000000000000000::numeric / NULLIF(token_amount,0))
+			WHEN sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
+			THEN ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) END price
+		FROM ordered
 	), totals AS (
 		SELECT token_address,bucket_start,count(*) trade_count,count(*) FILTER (WHERE side='buy') buy_count,count(*) FILTER (WHERE side='sell') sell_count,
-			coalesce(sum(curve_value),0) volume,count(DISTINCT lower(trader_address)) unique_trader_count FROM ordered GROUP BY token_address,bucket_start
+			coalesce(sum(CASE WHEN source='uniswap_v3' THEN reserve_amount ELSE curve_value END),0) volume,count(DISTINCT lower(trader_address)) unique_trader_count FROM priced GROUP BY token_address,bucket_start
 	), latest AS (
-		SELECT DISTINCT ON (token_address,bucket_start) * FROM ordered ORDER BY token_address,bucket_start,block_number DESC,log_index DESC,transaction_hash DESC
-	), prices AS (
-		SELECT token_address,bucket_start,block_number,log_index,transaction_hash,
-			ceil(((1000000000000000000::numeric + reserve_balance) * 1000000000000000000::numeric) / (1066666666666666666666666667::numeric - sold_supply)) price
-		FROM ordered WHERE sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0
+		SELECT DISTINCT ON (token_address,bucket_start) * FROM priced ORDER BY token_address,bucket_start,block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC
 	), candles AS (
-		SELECT t.token_address,t.bucket_start,
-			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number,t.log_index,t.transaction_hash))[1] END open_price,
-			CASE WHEN count(p.price)=count(*) THEN max(p.price) END high_price,
-			CASE WHEN count(p.price)=count(*) THEN min(p.price) END low_price,
-			CASE WHEN count(p.price)=count(*) THEN (array_agg(p.price ORDER BY t.block_number DESC,t.log_index DESC,t.transaction_hash DESC))[1] END close_price
-		FROM ordered t LEFT JOIN prices p USING(token_address,bucket_start,block_number,log_index,transaction_hash)
-		GROUP BY t.token_address,t.bucket_start
+		SELECT token_address,bucket_start,
+			CASE WHEN count(price)=count(*) THEN (array_agg(price ORDER BY block_number,transaction_index,log_index,transaction_hash))[1] END open_price,
+			CASE WHEN count(price)=count(*) THEN max(price) END high_price,
+			CASE WHEN count(price)=count(*) THEN min(price) END low_price,
+			CASE WHEN count(price)=count(*) THEN (array_agg(price ORDER BY block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC))[1] END close_price
+		FROM priced GROUP BY token_address,bucket_start
 	)
 	INSERT INTO token_trade_buckets(chain_id,token_address,bucket_start,trade_count,buy_count,sell_count,volume,unique_trader_count,open_price,high_price,low_price,close_price,block_number,block_hash,transaction_hash,log_index)
 	SELECT $1,t.token_address,t.bucket_start,t.trade_count,t.buy_count,t.sell_count,t.volume,t.unique_trader_count,c.open_price,c.high_price,c.low_price,c.close_price,l.block_number,l.block_hash,l.transaction_hash,l.log_index
 	FROM totals t JOIN latest l USING(token_address,bucket_start) LEFT JOIN candles c USING(token_address,bucket_start)`, chain)
 	return e
 }
-func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metadata map[string]TokenMetadata) error {
+func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metadata map[string]TokenMetadata, senders map[common.Hash]common.Address) error {
 	if len(l.Topics) == 0 {
 		return nil
 	}
@@ -371,6 +393,9 @@ func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metad
 	}
 	if !ok && l.Topics[0] == v3GraduationABI.Events["GraduatedV3"].ID {
 		ev, ok = "GraduatedV3", true
+	}
+	if !ok && l.Topics[0] == uniswapV3PoolABI.Events["Swap"].ID {
+		ev, ok = "UniswapV3Swap", true
 	}
 	if !ok {
 		log.Printf("zonk-indexer: unknown event chain_id=%d contract=%s tx=%s block=%d log_index=%d topic=%s", chain, l.Address.Hex(), l.TxHash.Hex(), l.BlockNumber, l.Index, l.Topics[0].Hex())
@@ -390,6 +415,10 @@ func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metad
 		decoderABI = v3GraduationABI
 		decoderEvent = "GraduatedV3"
 	}
+	if ev == "UniswapV3Swap" {
+		decoderABI = uniswapV3PoolABI
+		decoderEvent = "Swap"
+	}
 	vals := map[string]any{}
 	if e := decoderABI.UnpackIntoMap(vals, decoderEvent, l.Data); e != nil {
 		return fmt.Errorf("decode %s: %w", ev, e)
@@ -403,11 +432,11 @@ func insertEvent(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, metad
 		topics[i] = t.Hex()
 	}
 	tb, _ := json.Marshal(topics)
-	_, e := tx.Exec(ctx, `INSERT INTO chain_events(chain_id,block_number,block_hash,transaction_hash,log_index,contract_address,topic0,topics,data,event_name,decoded) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(chain_id,transaction_hash,log_index) DO UPDATE SET block_number=excluded.block_number,block_hash=excluded.block_hash,contract_address=excluded.contract_address,topic0=excluded.topic0,topics=excluded.topics,data=excluded.data,event_name=excluded.event_name,decoded=excluded.decoded,is_canonical=true,orphaned_at=NULL`, chain, l.BlockNumber, l.BlockHash.Hex(), l.TxHash.Hex(), l.Index, l.Address.Hex(), l.Topics[0].Hex(), tb, l.Data, ev, raw)
+	_, e := tx.Exec(ctx, `INSERT INTO chain_events(chain_id,block_number,block_hash,transaction_hash,transaction_index,log_index,contract_address,topic0,topics,data,event_name,decoded) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(chain_id,transaction_hash,log_index) DO UPDATE SET block_number=excluded.block_number,block_hash=excluded.block_hash,transaction_index=excluded.transaction_index,contract_address=excluded.contract_address,topic0=excluded.topic0,topics=excluded.topics,data=excluded.data,event_name=excluded.event_name,decoded=excluded.decoded,is_canonical=true,orphaned_at=NULL`, chain, l.BlockNumber, l.BlockHash.Hex(), l.TxHash.Hex(), l.TxIndex, l.Index, l.Address.Hex(), l.Topics[0].Hex(), tb, l.Data, ev, raw)
 	if e != nil {
 		return e
 	}
-	return projection(ctx, tx, chain, l, ev, vals, metadata)
+	return projection(ctx, tx, chain, l, ev, vals, metadata, senders)
 }
 
 var eventByTopic = func() map[common.Hash]string {
@@ -444,13 +473,69 @@ func str(v any) string {
 	}
 	return fmt.Sprint(v)
 }
+
+func absoluteInt(v *big.Int) *big.Int {
+	return new(big.Int).Abs(v)
+}
+
+func projectUniswapV3Swap(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, v map[string]any, senders map[common.Hash]common.Address) error {
+	var token string
+	var graduationBlock, graduationLog int64
+	err := tx.QueryRow(ctx, `SELECT lower(c.token_address),g.block_number,g.log_index
+		FROM curves c JOIN graduations g ON g.chain_id=c.chain_id AND lower(g.token_address)=lower(c.token_address) AND g.is_canonical
+		WHERE c.chain_id=$1 AND c.is_canonical AND lower(c.canonical_pool_address)=lower($2)
+			AND (g.block_number < $3 OR (g.block_number=$3 AND g.log_index < $4))
+		ORDER BY g.block_number DESC,g.log_index DESC LIMIT 1`, chain, l.Address.Hex(), l.BlockNumber, l.Index).Scan(&token, &graduationBlock, &graduationLog)
+	if err == pgx.ErrNoRows {
+		// The pool is either not trusted canonical state or the Swap occurred
+		// before the graduation event. Keep it out of the trade projection.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_ = graduationBlock
+	_ = graduationLog
+	amount0, ok0 := v["amount0"].(*big.Int)
+	amount1, ok1 := v["amount1"].(*big.Int)
+	if !ok0 || !ok1 || amount0.Sign() == 0 || amount1.Sign() == 0 || amount0.Sign() == amount1.Sign() {
+		return fmt.Errorf("invalid Uniswap V3 Swap signed amounts at %s", l.TxHash.Hex())
+	}
+	// Uniswap orders pool tokens by address. Base Sepolia WETH is token0 for
+	// P10G, but this comparison also handles a canonical pool where WETH is
+	// token1.
+	quoteSigned, tokenSigned := amount0, amount1
+	if strings.ToLower(baseSepoliaWETH) > strings.ToLower(token) {
+		quoteSigned, tokenSigned = amount1, amount0
+	}
+	side := "buy"
+	if quoteSigned.Sign() < 0 && tokenSigned.Sign() > 0 {
+		side = "sell"
+	} else if quoteSigned.Sign() <= 0 || tokenSigned.Sign() >= 0 {
+		return fmt.Errorf("unsupported Uniswap V3 Swap direction at %s", l.TxHash.Hex())
+	}
+	quoteAmount := absoluteInt(quoteSigned)
+	tokenAmount := absoluteInt(tokenSigned)
+	trader := v["recipient"]
+	if side == "sell" {
+		trader = v["sender"]
+	}
+	if sender, ok := senders[l.TxHash]; ok {
+		trader = sender
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO trades(chain_id,token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,source,transaction_index,block_number,block_hash,transaction_hash,log_index)
+		VALUES($1,$2,$3,$4,$5,$6,$6,0,0,'uniswap_v3',$7,$8,$9,$10,$11)
+		ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,trader_address=excluded.trader_address,side=excluded.side,token_amount=excluded.token_amount,reserve_amount=excluded.reserve_amount,curve_value=excluded.curve_value,protocol_fee=0,creator_fee=0,source='uniswap_v3',transaction_index=excluded.transaction_index,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, chain, token, u(trader), side, tokenAmount.String(), quoteAmount.String(), l.TxIndex, l.BlockNumber, l.BlockHash.Hex(), l.TxHash.Hex(), l.Index)
+	return err
+}
+
 func u(v any) string {
 	if v == nil {
 		return "0"
 	}
 	return str(v)
 }
-func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, v map[string]any, metadata map[string]TokenMetadata) error {
+func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, v map[string]any, metadata map[string]TokenMetadata, senders map[common.Hash]common.Address) error {
 	b := l.BlockHash.Hex()
 	t := l.TxHash.Hex()
 	i := l.Index
@@ -497,12 +582,14 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 			reserve = v["netSellerOutput"]
 			value = v["grossCurveOutput"]
 		}
-		_, e := tx.Exec(ctx, `INSERT INTO trades(chain_id,token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,trader_address=excluded.trader_address,side=excluded.side,token_amount=excluded.token_amount,reserve_amount=excluded.reserve_amount,curve_value=excluded.curve_value,protocol_fee=excluded.protocol_fee,creator_fee=excluded.creator_fee,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(trader), side, u(tokenAmount), u(reserve), u(value), u(v["protocolFee"]), u(v["creatorFee"]), l.BlockNumber, b, t, i)
+		_, e := tx.Exec(ctx, `INSERT INTO trades(chain_id,token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,source,transaction_index,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'curve',$10,$11,$12,$13,$14)
+			ON CONFLICT (chain_id,transaction_hash,log_index) DO UPDATE SET token_address=excluded.token_address,trader_address=excluded.trader_address,side=excluded.side,token_amount=excluded.token_amount,reserve_amount=excluded.reserve_amount,curve_value=excluded.curve_value,protocol_fee=excluded.protocol_fee,creator_fee=excluded.creator_fee,source='curve',transaction_index=excluded.transaction_index,block_number=excluded.block_number,block_hash=excluded.block_hash,is_canonical=true,orphaned_at=NULL`, c, u(v["token"]), u(trader), side, u(tokenAmount), u(reserve), u(value), u(v["protocolFee"]), u(v["creatorFee"]), l.TxIndex, l.BlockNumber, b, t, i)
 		if e != nil {
 			return e
 		}
 		return nil
+	case "UniswapV3Swap":
+		return projectUniswapV3Swap(ctx, tx, c, l, v, senders)
 	case "Graduated":
 		// V3 emits the graduation manager, forwarded ETH, and terminal sold supply.
 		_, e := tx.Exec(ctx, `INSERT INTO graduations(chain_id,token_address,phase,sold_supply,token_amount,graduation_manager_address,eth_amount,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,'graduated',$3,$4,$5,$6,$7,$8,$9,$10)

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Address } from "viem";
 import { TokenTradePanel, type TradeExecution, type TradeResume } from "@/components/token-trade-panel";
+import { GraduatedTokenSwap } from "@/components/graduated-token-swap";
 import { api } from "@/lib/api";
 import { formatNative, formatTokenAmount, formatWeiUsd } from "@/lib/format";
 import { captureTradeRecovery, checkTrade, confirmTrade, createExternalWalletClient, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitExternalBuy, submitExternalSell, submitSell } from "@/lib/contracts";
@@ -14,8 +15,8 @@ import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 
-export function TokenTrading({ tokenAddress, symbol, tokenPriceWei, graduated = false }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null; graduated?: boolean }) {
-  if (graduated) return <section className="terminal-panel p-5" aria-label="Bonding-curve trading closed"><span className="badge-violet">Graduated</span><h2 className="mt-3 text-lg font-semibold text-white">External liquidity active</h2><p className="mt-2 text-sm leading-6 text-zinc-400">Bonding-curve trading has ended. This token now trades through external liquidity.</p><p className="mt-3 text-xs leading-5 text-zinc-600">Zonk.fun does not route Uniswap swaps in this phase. Indexed trade history remains available.</p></section>;
+export function TokenTrading({ tokenAddress, symbol, tokenPriceWei, graduated = false, canonicalPoolAddress }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null; graduated?: boolean; canonicalPoolAddress?: Address }) {
+  if (graduated) return <GraduatedTokenSwap tokenAddress={tokenAddress} canonicalPoolAddress={canonicalPoolAddress} symbol={symbol} />;
   if (!hasPrivyAppId) return <div className="status-box status-warning">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
   return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} tokenPriceWei={tokenPriceWei} />;
 }
@@ -184,7 +185,7 @@ function TradeHistory({ tokenAddress, symbol, walletAddress }: { tokenAddress: A
     {visible?.length === 0 && <p className="m-4 text-sm text-zinc-400">{tab === "yours" ? "No trades from the active wallet are present in the recent indexed window." : "No indexed trades yet."}</p>}
     {visible && visible.length > 0 && <ul className="grid divide-y divide-white/6">
       {visible.map((trade) => <li className="grid gap-3 p-4 text-sm transition-colors hover:bg-white/[0.02] lg:grid-cols-[minmax(7rem,0.6fr)_minmax(12rem,1.3fr)_minmax(10rem,1fr)_auto] lg:items-center" key={`${trade.transaction_hash}:${trade.log_index}`}>
-        <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">#{trade.block_number}</span></div>
+        <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">{trade.source === "uniswap_v3" ? "Uniswap V3" : "Curve"} · #{trade.block_number}</span></div>
         <div><p className="font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p></div>
         <p className="address truncate" title={trade.trader}>{trade.trader}</p>
         <a className="inline-block text-cyan-300 hover:text-cyan-200 lg:text-right" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>

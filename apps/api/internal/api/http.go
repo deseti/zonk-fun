@@ -392,7 +392,11 @@ func (h *Handler) pricing(w http.ResponseWriter, r *http.Request) {
 		h.repositoryError(w, r, e)
 		return
 	}
-	writeJSON(w, 200, Pricing{TokenAddress: t.Address, CurrentPrice: t.Metrics.CurrentPrice, FullyDilutedValue: t.Metrics.FullyDilutedValue, Source: "indexed_v3_curve"})
+	source := "indexed_v3_curve"
+	if t.Graduation != nil && t.Graduation.Phase == "graduated" && t.LatestTradeSource != nil && *t.LatestTradeSource == "uniswap_v3" {
+		source = "indexed_v3_market"
+	}
+	writeJSON(w, 200, Pricing{TokenAddress: t.Address, CurrentPrice: t.Metrics.CurrentPrice, FullyDilutedValue: t.Metrics.FullyDilutedValue, Source: source})
 }
 func (h *Handler) chart(w http.ResponseWriter, r *http.Request) {
 	a, e := addressParam(r, "address")

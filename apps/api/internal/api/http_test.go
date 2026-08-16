@@ -153,8 +153,23 @@ func TestTokenSearchAndV3PricingResponse(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address+"/pricing", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"fully_diluted_value":"7000"`) || strings.Contains(w.Body.String(), "market_cap") || strings.Contains(w.Body.String(), "reserve_balance") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"current_price":"7"`) || !strings.Contains(w.Body.String(), `"fully_diluted_value":"7000"`) || !strings.Contains(w.Body.String(), `"source":"indexed_v3_curve"`) || strings.Contains(w.Body.String(), "market_cap") || strings.Contains(w.Body.String(), "reserve_balance") {
 		t.Fatalf("pricing=%s", w.Body.String())
+	}
+
+	market := "uniswap_v3"
+	r = testHandler(&fakeRepo{token: Token{Address: address, Metrics: Metrics{CurrentPrice: &price, FullyDilutedValue: &fdv}, Graduation: &Graduation{Phase: "graduated"}, LatestTradeSource: &market}})
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address+"/pricing", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"current_price":"7"`) || !strings.Contains(w.Body.String(), `"fully_diluted_value":"7000"`) || !strings.Contains(w.Body.String(), `"source":"indexed_v3_market"`) {
+		t.Fatalf("market pricing=%s", w.Body.String())
+	}
+
+	r = testHandler(&fakeRepo{token: Token{Address: address, Metrics: Metrics{CurrentPrice: &price, FullyDilutedValue: &fdv}, LatestTradeSource: &market}})
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+address+"/pricing", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"source":"indexed_v3_curve"`) {
+		t.Fatalf("active pricing was incorrectly labeled market=%s", w.Body.String())
 	}
 }
 

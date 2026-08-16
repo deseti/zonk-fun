@@ -16,6 +16,19 @@ const eventABI = `[
 var contractABI = mustABI()
 var v3TradeABI = mustV3TradeABI()
 var v3GraduationABI = mustV3GraduationABI()
+var uniswapV3PoolABI = mustUniswapV3PoolABI()
+
+const baseSepoliaWETH = "0x4200000000000000000000000000000000000006"
+
+func mustUniswapV3PoolABI() abi.ABI {
+	a, err := abi.JSON(strings.NewReader(`[
+{"type":"event","name":"Swap","inputs":[{"indexed":true,"name":"sender","type":"address"},{"indexed":true,"name":"recipient","type":"address"},{"indexed":false,"name":"amount0","type":"int256"},{"indexed":false,"name":"amount1","type":"int256"},{"indexed":false,"name":"sqrtPriceX96","type":"uint160"},{"indexed":false,"name":"liquidity","type":"uint128"},{"indexed":false,"name":"tick","type":"int24"}]}
+]`))
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
 
 func mustV3GraduationABI() abi.ABI {
 	a, err := abi.JSON(strings.NewReader(`[

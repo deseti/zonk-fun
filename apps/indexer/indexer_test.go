@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/big"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -22,14 +21,27 @@ func eventLog(t *testing.T, abiEvents map[string]abi.Event, name string, indexed
 	return types.Log{Address: common.HexToAddress("0x00000000000000000000000000000000000000aa"), Topics: append([]common.Hash{e.ID}, indexed...), Data: data}
 }
 
+func TestCanonicalLogsUseExactChainPositionOrdering(t *testing.T) {
+	blockHash := common.HexToHash("0x100")
+	first := types.Log{BlockNumber: 77, BlockHash: blockHash, TxHash: common.HexToHash("0xffff"), TxIndex: 2, Index: 1}
+	second := types.Log{BlockNumber: 77, BlockHash: blockHash, TxHash: common.HexToHash("0x0001"), TxIndex: 1, Index: 1}
+	logs, err := canonicalLogs([]types.Log{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].TxIndex != 1 || logs[1].TxIndex != 2 {
+		t.Fatalf("logs were not ordered by block, transaction, log position: %+v", logs)
+	}
+}
+
 func integrationStore(t *testing.T) *Store {
 	t.Helper()
 	url := os.Getenv("INDEXER_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("set INDEXER_TEST_DATABASE_URL to run PostgreSQL integration tests")
 	}
-	if !strings.Contains(strings.ToLower(url), "test") {
-		t.Fatal("integration database must be explicitly named test")
+	if err := validateIntegrationDatabaseURL(url); err != nil {
+		t.Fatal(err)
 	}
 	s, err := NewStore(context.Background(), url)
 	if err != nil {
@@ -46,6 +58,10 @@ func integrationStore(t *testing.T) *Store {
 
 func v3Launch(t *testing.T, token, creator, curve common.Hash) types.Log {
 	return eventLog(t, contractABI.Events, "TokenLaunchedV3", []common.Hash{creator, token, curve}, "endpoint-cp-v3", big.NewInt(1000), big.NewInt(800), big.NewInt(200), common.Address{}, common.Address{}, [32]byte{}, [32]byte{}, uint16(0))
+}
+
+func v3LaunchWithPool(t *testing.T, token, creator, curve, pool common.Address) types.Log {
+	return eventLog(t, contractABI.Events, "TokenLaunchedV3", []common.Hash{common.BytesToHash(creator.Bytes()), common.BytesToHash(token.Bytes()), common.BytesToHash(curve.Bytes())}, "endpoint-cp-v3", big.NewInt(1000), big.NewInt(800), big.NewInt(200), common.Address{}, pool, [32]byte{}, [32]byte{}, uint16(0))
 }
 
 func stamp(b *types.Header, logs ...types.Log) []types.Log {
@@ -106,6 +122,44 @@ func TestV3TransferAnalyticsAndIdempotency(t *testing.T) {
 	}
 	if *openPrice != expectedClose.String() || *highPrice != expectedClose.String() || *lowPrice != expectedClose.String() || *closePrice != expectedClose.String() {
 		t.Fatalf("bucket candle=%s/%s/%s/%s want=%s", *openPrice, *highPrice, *lowPrice, *closePrice, expectedClose)
+	}
+}
+
+func TestCanonicalUniswapV3SwapIsNormalizedAfterGraduation(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	token := common.HexToAddress("0x7000000000000000000000000000000000000111")
+	creator := common.HexToAddress("0x0000000000000000000000000000000000000112")
+	curve := common.HexToAddress("0x0000000000000000000000000000000000000113")
+	pool := common.HexToAddress("0x0000000000000000000000000000000000000114")
+	router := common.HexToAddress("0x0000000000000000000000000000000000000115")
+	wallet := common.HexToAddress("0x0000000000000000000000000000000000000116")
+	launchBlock := &types.Header{Number: big.NewInt(20), Time: 10_000}
+	launch := v3LaunchWithPool(t, token, creator, curve, pool)
+	launch.Address = common.HexToAddress("0x0000000000000000000000000000000000000117")
+	launchLogs := stamp(launchBlock, launch)
+	metadata := map[string]TokenMetadata{token.Hex(): {Name: "Uniswap", Symbol: "UNI", Decimals: 18}}
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-uniswap", launchBlock, launchLogs, metadata); err != nil {
+		t.Fatal(err)
+	}
+	tradeBlock := &types.Header{Number: big.NewInt(21), Time: 10_100}
+	settled := eventLog(t, v3GraduationABI.Events, "GraduatedV3", []common.Hash{common.BytesToHash(token.Bytes()), common.BytesToHash(creator.Bytes()), common.BigToHash(big.NewInt(1))}, big.NewInt(1))
+	settled.Address = creator
+	graduated := eventLog(t, contractABI.Events, "Graduated", []common.Hash{common.BytesToHash(token.Bytes()), common.BytesToHash(creator.Bytes())}, big.NewInt(900), big.NewInt(100), big.NewInt(800))
+	graduated.Address = curve
+	swap := eventLog(t, uniswapV3PoolABI.Events, "Swap", []common.Hash{common.BytesToHash(router.Bytes()), common.BytesToHash(wallet.Bytes())}, big.NewInt(100), big.NewInt(-1000), big.NewInt(1), big.NewInt(1), big.NewInt(1))
+	swap.Address = pool
+	tradeLogs := stamp(tradeBlock, settled, graduated, swap)
+	tradeLogs[1].TxHash = tradeLogs[0].TxHash
+	if err := s.ApplyWithMetadataAndSenders(ctx, BaseSepoliaChainID, "v3-uniswap", tradeBlock, tradeLogs, metadata, map[common.Hash]common.Address{tradeLogs[2].TxHash: wallet}); err != nil {
+		t.Fatal(err)
+	}
+	var source, side, trader, tokenAmount, reserve string
+	if err := s.pool.QueryRow(ctx, `SELECT source,side,trader_address,token_amount::text,reserve_amount::text FROM trades WHERE chain_id=$1 AND transaction_hash=$2`, BaseSepoliaChainID, tradeLogs[2].TxHash.Hex()).Scan(&source, &side, &trader, &tokenAmount, &reserve); err != nil {
+		t.Fatal(err)
+	}
+	if source != "uniswap_v3" || side != "buy" || trader != wallet.Hex() || tokenAmount != "1000" || reserve != "100" {
+		t.Fatalf("normalized swap=%s/%s/%s/%s/%s", source, side, trader, tokenAmount, reserve)
 	}
 }
 
