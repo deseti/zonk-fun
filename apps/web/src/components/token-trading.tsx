@@ -182,11 +182,12 @@ function TradeHistory({ tokenAddress, symbol, walletAddress }: { tokenAddress: A
     {trades.isPending && <p className="mt-5 text-sm text-zinc-400">Loading trade history…</p>}
     {trades.isError && <p className="mt-5 text-sm text-red-300">Trade history could not be loaded.</p>}
     {visible?.length === 0 && <p className="m-4 text-sm text-zinc-400">{tab === "yours" ? "No trades from the active wallet are present in the recent indexed window." : "No indexed trades yet."}</p>}
-    {visible && visible.length > 0 && <ul className="grid max-h-[43rem] divide-y divide-white/6 overflow-y-auto">
-      {visible.map((trade) => <li className="p-4 text-sm transition-colors hover:bg-white/[0.02]" key={`${trade.transaction_hash}:${trade.log_index}`}>
+    {visible && visible.length > 0 && <ul className="grid divide-y divide-white/6">
+      {visible.map((trade) => <li className="grid gap-3 p-4 text-sm transition-colors hover:bg-white/[0.02] lg:grid-cols-[minmax(7rem,0.6fr)_minmax(12rem,1.3fr)_minmax(10rem,1fr)_auto] lg:items-center" key={`${trade.transaction_hash}:${trade.log_index}`}>
         <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">#{trade.block_number}</span></div>
-        <p className="mt-2 font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p>
-        <a className="mt-2 inline-block text-cyan-300 hover:text-cyan-200" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
+        <div><p className="font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p></div>
+        <p className="address truncate" title={trade.trader}>{trade.trader}</p>
+        <a className="inline-block text-cyan-300 hover:text-cyan-200 lg:text-right" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
       </li>)}
     </ul>}{!reference && <p className="border-t border-white/8 px-4 py-3 text-xs text-zinc-600">USD unavailable · exact indexed ETH values remain visible.</p>}
   </section>;

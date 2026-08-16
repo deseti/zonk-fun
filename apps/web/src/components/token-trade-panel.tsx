@@ -414,14 +414,14 @@ export function TokenTradePanel(props: Props) {
   const inputUsd = side === "buy" ? inputEthUsd(amount, reference) : "—";
 
   return <section className="terminal-panel p-4" aria-label="Buy and sell">
-    <div className="trade-panel-grid grid min-w-0 gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(18rem,1.05fr)]">
+    <div className="trade-panel-grid grid min-w-0 gap-5">
       <div className="min-w-0" aria-label="Trade inputs and wallet">
         <div className="flex rounded-xl border border-white/8 bg-black/20 p-1" role="group" aria-label="Trade side">
           <button className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold transition-colors ${side === "buy" ? "bg-emerald-400 text-[#03251a] shadow-lg shadow-emerald-950/20" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`} aria-pressed={side === "buy"} type="button" disabled={locked} onClick={() => changeSide("buy")}>Buy</button>
           <button className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold transition-colors ${side === "sell" ? "bg-red-500 text-white shadow-lg shadow-red-950/25" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`} aria-pressed={side === "sell"} type="button" disabled={locked} onClick={() => changeSide("sell")}>Sell</button>
         </div>
         <div className="mt-5 flex items-start justify-between gap-3"><div><p className="text-xs text-zinc-500">Protected curve order</p><h3 className="mt-1 text-xl font-semibold text-white">{side === "buy" ? `Buy ${props.symbol}` : `Sell ${props.symbol}`}</h3></div><span className="badge-neutral">60s quote</span></div>
-        <div className="mt-4 rounded-xl border border-white/8 bg-black/15 p-3"><p className="text-xs text-zinc-500">Active signer · <span className="text-zinc-200">{props.walletMode === "external" ? "External wallet" : "Privy embedded smart wallet"}</span></p>{props.walletAddress && <p className="address mt-1">{props.walletAddress}</p>}</div>
+        <div className="mt-4 min-w-0 rounded-xl border border-white/8 bg-black/15 p-3"><p className="text-xs text-zinc-500">Active signer · <span className="text-zinc-200">{props.walletMode === "external" ? "External wallet" : "Privy embedded smart wallet"}</span></p>{props.walletAddress && <p className="address mt-1 truncate" title={props.walletAddress}>{props.walletAddress}</p>}</div>
         {guard && <p className="status-box status-warning mt-4">{guard}</p>}
         {props.statePending && <p className="status-box mt-4 text-zinc-400">Loading balances and curve state…</p>}
         {props.stateError && <p className="status-box status-error mt-4">{props.stateError}</p>}
@@ -434,27 +434,39 @@ export function TokenTradePanel(props: Props) {
         <div className="mt-5 grid gap-4">
           <label className="grid gap-2 text-sm text-zinc-300"><span className="flex items-center justify-between gap-3"><span className="font-medium text-zinc-200">{side === "buy" ? "Pay amount" : "Sell amount"}</span><span className="text-xs text-zinc-600">{side === "buy" ? inputUsd : quotedTokenEstimate}</span></span><div className="relative"><input className="pr-16" aria-label={side === "buy" ? "ETH amount" : `${props.symbol} amount`} inputMode="decimal" value={amount} placeholder="0.0" disabled={controlsUnavailable} onChange={(event) => changeAmount(event.target.value)} /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-500">{side === "buy" ? "ETH" : props.symbol}</span></div></label>
           <label className="grid gap-2 text-sm text-zinc-300"><span className="flex items-center justify-between gap-3"><span className="font-medium text-zinc-200">Slippage tolerance</span><span className="text-xs text-zinc-500">0–50%</span></span><div className="relative"><input className="pr-12" aria-label="Slippage tolerance" inputMode="decimal" value={slippage} disabled={controlsUnavailable} onChange={(event) => changeSlippage(event.target.value)} /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500">%</span></div></label>
-          <button className="button-secondary w-full" type="button" aria-label="Get quote" disabled={quoteLoading || controlsUnavailable || Boolean(guard)} onClick={refreshQuote}>{quoteLoading ? "Refreshing protected quote…" : quoteRecord ? "Refresh protected quote" : "Get protected quote"}</button>
+          <button className={`${quote ? "button-ghost text-xs" : "button-secondary"} w-full`} type="button" aria-label="Get quote" disabled={quoteLoading || controlsUnavailable || Boolean(guard)} onClick={refreshQuote}>{quoteLoading ? "Refreshing protected quote…" : quoteRecord ? "Refresh protected quote" : "Get protected quote"}</button>
           {quoteLoading && <p className="text-center text-xs text-zinc-500" aria-live="polite">Reading a protected quote from the curve…</p>}
         </div>
       </div>
-      <div className="min-w-0 border-t border-white/8 pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0" aria-label="Quote and confirmation">
-        {quote ? <div className="rounded-xl border border-cyan-300/18 bg-cyan-300/[0.025] p-4 text-sm">
-          <div className="mb-4 flex items-center justify-between gap-3"><div><p className="font-semibold text-white">Quote summary</p><p className="mt-1 text-xs text-zinc-600">{reference ? `Chainlink USD · updated ${new Date(reference.asOf).toLocaleString()}` : "USD unavailable · execution remains ETH-denominated"}</p></div><span className="badge-success">Ready</span></div>
+      <div className="min-w-0 border-t border-white/8 pt-5" aria-label="Quote and confirmation">
+        {quote ? <div className="text-sm" aria-label="Ready protected quote">
+          <div className="mb-2 flex items-center justify-between gap-3"><p className="eyebrow">Protected quote</p><span className="badge-success">Ready</span></div>
           {quote.side === "buy" ? <>
-            <QuoteRow label="Pay" value={formatWeiUsd(quote.reserveIn, reference)} secondary={formatNative(quote.reserveIn)} strong />
-            <QuoteRow label="Token output" value={formatTokenAmount(quote.tokenAmount, props.state?.decimals ?? 18, props.symbol)} secondary={quotedTokenEstimate} strong />
+            <QuoteRow label="You receive" value={formatTokenAmount(quote.tokenAmount, props.state?.decimals ?? 18, props.symbol)} strong />
             <QuoteRow label="Maximum input" value={formatWeiUsd(quote.maxReserveIn, reference)} secondary={formatNative(quote.maxReserveIn)} />
-            <p className="mt-3 text-xs leading-5 text-zinc-500">This contract buys an exact token output; any unused maximum ETH is refunded.</p>
           </> : <>
             <QuoteRow label="Token input" value={formatTokenAmount(quote.tokenAmount, props.state?.decimals ?? 18, props.symbol)} secondary={quotedTokenEstimate} strong />
-            <QuoteRow label="Receive" value={formatWeiUsd(quote.reserveOut, reference)} secondary={formatNative(quote.reserveOut)} strong />
+            <QuoteRow label="You receive" value={formatWeiUsd(quote.reserveOut, reference)} secondary={formatNative(quote.reserveOut)} strong />
             <QuoteRow label="Minimum ETH output" value={formatWeiUsd(quote.minReserveOut, reference)} secondary={formatNative(quote.minReserveOut)} />
-            {props.state && props.state.allowance < quote.tokenAmount && <p className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/[0.035] p-3 text-xs leading-5 text-zinc-400">{props.walletMode === "embedded" ? "Token approval and sale will be submitted atomically by the smart wallet." : "Your external wallet will request an approval transaction first. Zonk.fun waits for its receipt before requesting the sell transaction."}</p>}
           </>}
-          <div className="my-4 border-t border-white/8" /><QuoteRow label="Protocol fee" value={formatWeiUsd(quote.protocolFee, reference)} secondary={formatNative(quote.protocolFee)} /><QuoteRow label="Creator fee" value={formatWeiUsd(quote.creatorFee, reference)} secondary={formatNative(quote.creatorFee)} /><QuoteRow label="Slippage protection" value={`${(quote.slippageBps / 100).toFixed(2)}%`} /><QuoteRow label="Price impact" value="Unavailable" /><QuoteRow label="Quote expiry" value={formatDeadline(quote.deadline)} />
-          <p className="mt-3 text-xs leading-5 text-zinc-500">Quote expires after 60 seconds. Execution uses the exact displayed maximum input or minimum output and deadline.</p>
+          <QuoteRow label="Fees" value="Protocol + creator" />
+          <QuoteRow label="Slippage protection" value={`${(quote.slippageBps / 100).toFixed(2)}%`} />
+          <QuoteRow label="Quote expiry" value={formatDeadline(quote.deadline)} />
+          {quote.side === "sell" && props.state && props.state.allowance < quote.tokenAmount && <p className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/[0.035] p-3 text-xs leading-5 text-zinc-400">{props.walletMode === "embedded" ? "Token approval and sale will be submitted atomically by the smart wallet." : "Your external wallet will request an approval transaction first. Zonk.fun waits for its receipt before requesting the sell transaction."}</p>}
           <button className="button-primary mt-4 w-full" type="button" disabled={locked || Boolean(guard)} onClick={() => void submit()}>{locked ? "Trade locked…" : `Confirm ${quote.side}`}</button>
+          <details className="mt-3 border-t border-white/8 pt-3 text-xs text-zinc-500">
+            <summary className="cursor-pointer font-medium text-zinc-300 hover:text-white">Quote details</summary>
+            <div className="mt-3">
+              <p className="leading-5">{reference ? `Chainlink USD · updated ${new Date(reference.asOf).toLocaleString()}` : "USD unavailable · execution remains ETH-denominated"}</p>
+              {quote.side === "buy" && <QuoteRow label="Pay" value={formatWeiUsd(quote.reserveIn, reference)} secondary={formatNative(quote.reserveIn)} />}
+              <QuoteRow label="Reference token value" value={quotedTokenEstimate} />
+              <QuoteRow label="Protocol fee" value={formatWeiUsd(quote.protocolFee, reference)} secondary={formatNative(quote.protocolFee)} />
+              <QuoteRow label="Creator fee" value={formatWeiUsd(quote.creatorFee, reference)} secondary={formatNative(quote.creatorFee)} />
+              <QuoteRow label="Price impact" value="Unavailable" />
+              {quote.side === "buy" && <p className="mt-3 leading-5">This contract buys an exact token output; any unused maximum ETH is refunded.</p>}
+              <p className="mt-3 leading-5">Quote expires after 60 seconds. Execution uses the exact displayed maximum input or minimum output and deadline.</p>
+            </div>
+          </details>
         </div> : <div className={`panel-subtle p-4 text-sm leading-6 ${quoteStale || quoteStateChanged ? "text-amber-200" : "text-zinc-500"}`}><p className="font-medium text-zinc-200">Protected quote</p><p className="mt-2">{quoteLoading ? "Refreshing from the active Zonk curve…" : quoteStale ? "This quote expired. Refresh it before submitting." : quoteStateChanged ? "Curve state or balances changed. Waiting for a fresh quote." : "Enter an amount to load contract-backed output, fees, protection, and expiry."}</p></div>}
         {status !== "idle" && <div className={`status-box mt-5 ${status === "confirmed" ? "status-success" : ["failed", "reverted", "replaced"].includes(status) ? "status-error" : status === "confirmation_unknown" ? "status-warning" : ""}`} aria-live="polite" role="status">
           <div className="flex items-start gap-3"><span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${locked && status !== "confirmation_unknown" ? "animate-pulse bg-cyan-300" : status === "confirmed" ? "bg-emerald-300" : ["failed", "reverted", "replaced"].includes(status) ? "bg-rose-300" : "bg-amber-300"}`} /><p className="font-medium">{tradeStatusLabel(status)}</p></div>

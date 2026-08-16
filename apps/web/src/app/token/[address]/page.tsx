@@ -29,13 +29,13 @@ export default function TokenDetailPage() {
   }, [address, valid]);
 
   if (!valid) return <PageState title="Invalid token address" copy="Check the address and try opening the token again." />;
-  if (query.isPending) return <main className="container page-shell flex-1" aria-label="Loading indexed token"><div className="skeleton h-6 w-28 rounded" /><div className="mt-5 flex gap-5"><div className="skeleton h-20 w-20 flex-none rounded-2xl" /><div className="min-w-0 flex-1"><div className="skeleton h-9 w-64 max-w-full rounded" /><div className="skeleton mt-4 h-4 w-full max-w-xl rounded" /></div></div><div className="skeleton mt-8 h-[34rem] rounded-2xl" /></main>;
+  if (query.isPending) return <main className="token-terminal-container page-shell flex-1" aria-label="Loading indexed token"><div className="skeleton h-6 w-28 rounded" /><div className="mt-5 flex gap-5"><div className="skeleton h-20 w-20 flex-none rounded-2xl" /><div className="min-w-0 flex-1"><div className="skeleton h-9 w-64 max-w-full rounded" /><div className="skeleton mt-4 h-4 w-full max-w-xl rounded" /></div></div><div className="skeleton mt-8 h-[34rem] rounded-2xl" /></main>;
   if (query.isError) return <PageState title="Token could not be loaded" copy={query.error.message} action={() => void query.refetch()} />;
   const token = query.data;
   const graduated = isGraduatedToken(token);
   const lifecycle = lifecycleBadge(token.graduation?.phase, Boolean(token.curve));
 
-  return <main className="container page-shell flex-1">
+  return <main className="token-terminal-container page-shell flex-1">
     <Link href="/" className="inline-flex min-h-10 items-center text-sm text-zinc-500 transition-colors hover:text-cyan-200"><span aria-hidden>←</span>&nbsp; Markets</Link>
     <section className="mt-3 border-b border-white/8 pb-6">
       <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center">
@@ -46,16 +46,20 @@ export default function TokenDetailPage() {
       <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:hidden"><TopMetric label="FDV" value={formatWeiUsd(token.metrics.fully_diluted_value, reference)} /><TopMetric label="Volume" value={formatWeiUsd(token.metrics.volume, reference)} />{graduated ? <TopMetric label="LP custody" value={hasIndexedSettlement(token) ? "Permanent" : "Details pending"} /> : <TopMetric label="Curve reserve" value={formatWeiUsd(token.curve?.reserve_balance, reference)} />}<TopMetric label="Holders" value={formatCount(token.metrics.holder_count)} /></div>
     </section>
 
-    <div className="terminal-layout mt-5">
-      <div className="terminal-history"><TokenTradeHistory tokenAddress={address} symbol={token.symbol} /></div>
-      <div className="terminal-center">
-        <div className="terminal-chart"><TokenChart tokenAddress={address} initialSupply={token.initial_supply} className="" /></div>
-        <div className="terminal-trade"><TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} tokenPriceWei={token.metrics.current_price} graduated={graduated} /></div>
+    <div className="token-terminal-layout mt-5">
+      <div className="token-terminal-main">
+        <div className="token-terminal-primary">
+          <div className="terminal-chart"><TokenChart tokenAddress={address} initialSupply={token.initial_supply} className="" /></div>
+        </div>
+        <div className="token-terminal-sidebar">
+          <div className="terminal-trade"><TokenTrading tokenAddress={address} symbol={token.symbol} creator={token.creator as `0x${string}`} tokenPriceWei={token.metrics.current_price} graduated={graduated} /></div>
+        </div>
+        <div className="token-terminal-support">
+          <aside className="terminal-market"><MarketOverview token={token} onchain={onchain} reference={reference} /></aside>
+          <aside className="terminal-graduation"><TokenGraduation token={token} /></aside>
+        </div>
       </div>
-      <div className="terminal-right">
-        <aside className="terminal-market"><MarketOverview token={token} onchain={onchain} reference={reference} /></aside>
-        <aside className="terminal-graduation"><TokenGraduation token={token} /></aside>
-      </div>
+      <div className="token-terminal-history"><TokenTradeHistory tokenAddress={address} symbol={token.symbol} /></div>
     </div>
 
     <section className="mt-10 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.6fr)]">

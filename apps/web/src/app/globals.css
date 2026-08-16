@@ -50,6 +50,7 @@ button:disabled { cursor: not-allowed; }
 
 .container { width: min(calc(100% - 2rem), 76rem); margin-inline: auto; }
 .market-container { width: min(calc(100% - 2rem), 96rem); margin-inline: auto; min-width: 0; }
+.token-terminal-container { width: min(calc(100% - 2rem), 96rem); min-width: 0; margin-inline: auto; }
 .page-shell { padding-block: 2.5rem 4.5rem; }
 .market-page { padding-block: 1.25rem 3.5rem; }
 .market-hero {
@@ -132,12 +133,14 @@ button:disabled { cursor: not-allowed; }
   background: rgb(8 16 25 / 0.92);
   box-shadow: 0 14px 40px rgb(0 0 0 / 0.18);
 }
-.terminal-layout { display: grid; width: 100%; min-width: 0; max-width: 100%; gap: 0.75rem; grid-template-areas: "right" "center" "history"; }
-.terminal-layout > * { min-width: 0; max-width: 100%; }
-.terminal-history { grid-area: history; min-width: 0; }
-.terminal-center { grid-area: center; }
-.terminal-right { grid-area: right; }
-.terminal-center, .terminal-right { display: grid; min-width: 0; max-width: 100%; align-content: start; gap: 0.75rem; }
+.token-terminal-layout, .token-terminal-main, .token-terminal-primary, .token-terminal-sidebar, .token-terminal-support, .token-terminal-history { width: 100%; min-width: 0; max-width: 100%; }
+.token-terminal-main, .token-terminal-primary, .token-terminal-sidebar, .token-terminal-support { display: grid; align-content: start; gap: 0.75rem; }
+.token-terminal-main { grid-template-areas: "primary" "sidebar" "support"; }
+.token-terminal-primary { grid-area: primary; }
+.token-terminal-sidebar { grid-area: sidebar; align-self: start; }
+.token-terminal-support { grid-area: support; }
+.token-terminal-support > aside > .terminal-panel { height: 100%; }
+.token-terminal-history { margin-top: 0.75rem; }
 .terminal-chart, .terminal-market, .terminal-trade, .terminal-graduation { min-width: 0; max-width: 100%; }
 
 .button-primary, .button-secondary, .button-ghost {
@@ -216,6 +219,7 @@ input.header-search-input { min-height: 2.35rem; border-radius: 0.65rem; padding
 @media (max-width: 639px) {
   .container { width: min(calc(100% - 1.25rem), 76rem); }
   .market-container { width: min(calc(100% - 1.25rem), 96rem); }
+  .token-terminal-container { width: min(calc(100% - 1.25rem), 96rem); }
   .page-shell { padding-block: 1.75rem 3.5rem; }
   .market-page { padding-block: 0.75rem 3rem; }
   .market-hero { border-radius: var(--radius); padding: 1.15rem; }
@@ -231,11 +235,12 @@ input.header-search-input { min-height: 2.35rem; border-radius: 0.65rem; padding
 @media (min-width: 1536px) { .token-market-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 
 @media (min-width: 1024px) {
-  .terminal-layout {
+  .token-terminal-main {
     align-items: start;
-    grid-template-columns: minmax(12rem, 0.52fr) minmax(0, 2.9fr) minmax(16rem, 0.7fr);
-    grid-template-areas: "history center right";
+    grid-template-columns: minmax(0, 3fr) minmax(18rem, 1fr);
+    grid-template-areas: "primary sidebar" "support sidebar";
   }
+  .token-terminal-support { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

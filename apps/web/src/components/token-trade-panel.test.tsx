@@ -1,9 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pendingTradeKey, persistPendingTrade, readPendingTrade } from "@/lib/transactions";
 import { TokenTradePanel, type TradeExecution } from "./token-trade-panel";
+
+const panelSource = readFileSync(resolve(process.cwd(), "src/components/token-trade-panel.tsx"), "utf8");
 
 const token = "0x0000000000000000000000000000000000000011" as const;
 const otherToken = "0x0000000000000000000000000000000000000012" as const;
@@ -68,7 +72,7 @@ function renderPanel(overrides: Partial<ComponentProps<typeof TokenTradePanel>> 
 async function requestBuyQuote(user: ReturnType<typeof userEvent.setup>, value = "0.01") {
   await user.type(screen.getByLabelText("ETH amount"), value);
   await user.click(screen.getByRole("button", { name: "Get quote" }));
-  await screen.findByText("Token output");
+  await screen.findByText("You receive");
 }
 
 async function requestSellQuote(user: ReturnType<typeof userEvent.setup>) {
@@ -83,15 +87,51 @@ function storePending(overrides: Partial<Parameters<typeof persistPendingTrade>[
 }
 
 describe("TokenTradePanel", () => {
-  it("separates desktop inputs from quote confirmation and prioritizes token output", async () => {
+  it("stacks quote confirmation below inputs in the compact sidebar", async () => {
     const user = userEvent.setup();
     renderPanel({ tokenPriceWei: "1000000000" });
-    expect(screen.getByLabelText("Trade inputs and wallet")).toBeTruthy();
-    expect(screen.getByLabelText("Quote and confirmation")).toBeTruthy();
+    const inputs = screen.getByLabelText("Trade inputs and wallet");
+    const confirmation = screen.getByLabelText("Quote and confirmation");
+    expect(inputs.parentElement).toBe(confirmation.parentElement);
+    expect(inputs.compareDocumentPosition(confirmation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(confirmation.className).toContain("border-t");
     await requestBuyQuote(user);
-    expect(screen.getByText("Token output")).toBeTruthy();
+    expect(screen.getByText("You receive")).toBeTruthy();
     expect(screen.getByText("1 ZONK")).toBeTruthy();
     expect(screen.queryByText("Exact token output")).toBeNull();
+  });
+
+  it("keeps ready quote decisions visible and secondary fields in a closed disclosure", async () => {
+    const user = userEvent.setup();
+    renderPanel({ tokenPriceWei: "1000000000" });
+    await requestBuyQuote(user);
+
+    const panel = screen.getByLabelText("Buy and sell");
+    const readyQuote = screen.getByLabelText("Ready protected quote");
+    const details = screen.getByText("Quote details").closest("details") as HTMLDetailsElement;
+    expect(panel.contains(readyQuote)).toBe(true);
+    expect(readyQuote.className).not.toMatch(/rounded|border|bg-|p-4/);
+    expect(screen.getByText("You receive")).toBeTruthy();
+    expect(screen.getByText("Maximum input")).toBeTruthy();
+    expect(screen.getByText("Fees")).toBeTruthy();
+    expect(screen.getByText("Slippage protection")).toBeTruthy();
+    expect(screen.getByText("Quote expiry")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm buy" })).toBeTruthy();
+    expect(screen.queryByText("Quote summary")).toBeNull();
+    expect(details.open).toBe(false);
+    expect(details.contains(screen.getByText("Protocol fee"))).toBe(true);
+    expect(details.contains(screen.getByText("Creator fee"))).toBe(true);
+  });
+
+  it("does not reintroduce wide-panel breakpoint styling and truncates the active address", () => {
+    renderPanel();
+    const address = screen.getByText(wallet);
+
+    expect(panelSource).not.toContain("lg:grid-cols-[minmax(0,0.95fr)_minmax(18rem,1.05fr)]");
+    expect(panelSource).not.toContain("lg:border-l");
+    expect(panelSource).not.toContain("lg:pl-5");
+    expect(address.className).toContain("truncate");
+    expect(address.getAttribute("title")).toBe(wallet);
   });
 
   it("debounces amount changes before requesting an automatic protected quote", async () => {
