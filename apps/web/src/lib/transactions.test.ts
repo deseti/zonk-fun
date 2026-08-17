@@ -5,8 +5,8 @@ afterEach(() => localStorage.clear());
 
 describe("transaction foundation", () => {
   it("defines distinct lifecycle states", () => {
-    const states: TransactionStatus[] = ["idle", "preparing", "awaiting_wallet", "submitted", "confirming", "confirmed", "failed", "rejected"];
-    expect(new Set(states).size).toBe(8);
+    const states: TransactionStatus[] = ["idle", "preparing", "awaiting_wallet", "submitted", "confirming", "confirmed", "failed", "rejected", "dev_buy_preparing", "dev_buy_awaiting_wallet", "dev_buy_submitted", "dev_buy_confirming", "dev_buy_confirmed", "dev_buy_failed", "dev_buy_rejected"];
+    expect(new Set(states).size).toBe(15);
     expect(idleTransaction.status).toBe("idle");
     expect(states).toContain("failed");
     expect(states).toContain("rejected");
@@ -38,11 +38,14 @@ describe("transaction foundation", () => {
   });
 
   it("validates metadata and image constraints", () => {
-    const valid = { name: "Zonk", symbol: "ZK", description: "A token", websiteUrl: "https://zonk.fun", xUrl: "https://x.com/zonk", telegramUrl: "https://t.me/zonk", discordUrl: "https://discord.gg/zonk", image: new File(["ok"], "token.png", { type: "image/png" }) };
+    const valid = { name: "Zonk", symbol: "ZK", description: "A token", websiteUrl: "https://zonk.fun", xUrl: "https://x.com/zonk", telegramUrl: "https://t.me/zonk", discordUrl: "https://discord.gg/zonk", imageFile: new File(["ok"], "token.png", { type: "image/png" }), imageUrl: "", imageSource: "file" as const, devBuyEth: "" };
     expect(validateCreateToken(valid)).toEqual({});
     expect(validateCreateToken({ ...valid, description: "", websiteUrl: "", xUrl: "", telegramUrl: "", discordUrl: "" })).toEqual({});
     expect(validateCreateToken({ ...valid, xUrl: "https://example.com/zonk" }).xUrl).toMatch(/X\/Twitter/);
-    expect(validateCreateToken({ ...valid, image: new File(["bad"], "token.svg", { type: "image/svg+xml" }) }).image).toMatch(/PNG/);
-    expect(validateCreateToken({ ...valid, image: new File([new Uint8Array(MAX_IMAGE_BYTES + 1)], "large.png", { type: "image/png" }) }).image).toMatch(/5 MB/);
+    expect(validateCreateToken({ ...valid, imageFile: new File(["bad"], "token.svg", { type: "image/svg+xml" }) }).image).toMatch(/PNG/);
+    expect(validateCreateToken({ ...valid, imageFile: new File([new Uint8Array(MAX_IMAGE_BYTES + 1)], "large.png", { type: "image/png" }) }).image).toMatch(/5 MB/);
+    expect(validateCreateToken({ ...valid, imageSource: "url", imageFile: null, imageUrl: "http://example.com/image.png" }).image).toMatch(/HTTPS/);
+    expect(validateCreateToken({ ...valid, imageSource: "url", imageFile: null, imageUrl: "https://example.com/image.png" })).toEqual({});
+    expect(validateCreateToken({ ...valid, devBuyEth: "-0.1" }).devBuyEth).toMatch(/valid ETH/);
   });
 });

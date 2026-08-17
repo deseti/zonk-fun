@@ -13,7 +13,7 @@ import {
   zonkFactoryAbi,
 } from "@zonk/contracts-sdk";
 import type { SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
-import { buildSellCalls, contractAddresses, createExternalWalletClient, privyTransactionUiOptions, publicClient, sendSmartWalletTransaction, submitBuy, submitCreateToken, submitExternalBuy, submitExternalCreateToken, submitExternalSell, submitSell, type ExternalWalletClient } from "./contracts";
+import { assertBuyQuoteFresh, buildSellCalls, contractAddresses, createExternalWalletClient, privyTransactionUiOptions, publicClient, sendSmartWalletTransaction, submitBuy, submitCreateToken, submitExternalBuy, submitExternalCreateToken, submitExternalSell, submitSell, type ExternalWalletClient } from "./contracts";
 
 const factory = "0x11657C36DDa4F6E9C4b6d73ed56DF91d65d500E4" as const;
 const token = "0x0000000000000000000000000000000000000011" as const;
@@ -40,6 +40,10 @@ describe("factory SDK", () => {
 });
 
 describe("curve trade SDK", () => {
+  it("rejects stale protected buy quotes", () => {
+    expect(() => assertBuyQuoteFresh({ deadline: BigInt(Math.floor(Date.now() / 1000) - 1) })).toThrow(/expired/i);
+  });
+
   it("requires Privy's confirmation UI for direct smart-wallet calls", async () => {
     const hash = `0x${"ab".repeat(32)}` as const;
     const sendTransaction = vi.fn().mockResolvedValue(hash);
@@ -70,7 +74,7 @@ describe("curve trade SDK", () => {
     const hash = `0x${"ab".repeat(32)}` as const;
     const sendTransaction = vi.fn().mockResolvedValue(hash);
     const client = { sendTransaction } as unknown as SmartWalletClientType;
-    const buyQuote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(99) };
+    const buyQuote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(Math.floor(Date.now() / 1000) + 300) };
     const sellQuote = { tokenAmount: BigInt(56), reserveOut: BigInt(90), minReserveOut: BigInt(78), curveValue: BigInt(92), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(99) };
     try {
       await submitCreateToken(client, creator, "Zonk", "ZK", { startingPrice: BigInt(1), slope: BigInt(2), graduationThreshold: BigInt(3) });
@@ -96,7 +100,7 @@ describe("curve trade SDK", () => {
     const hash = `0x${"31".repeat(32)}` as const;
     const sendTransaction = vi.fn().mockResolvedValue(hash);
     const client = { sendTransaction } as unknown as ExternalWalletClient;
-    const quote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(99) };
+    const quote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(Math.floor(Date.now() / 1000) + 300) };
     try {
       await expect(submitExternalBuy(client, creator, token, quote)).resolves.toBe(hash);
       expect(sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ account: creator, chain: expect.objectContaining({ id: 84532 }), to: curve, value: quote.maxReserveIn }));
@@ -131,7 +135,7 @@ describe("curve trade SDK", () => {
     const simulate = vi.spyOn(publicClient, "simulateContract").mockResolvedValue({} as never);
     const hash = `0x${"32".repeat(32)}` as const;
     const request = vi.fn().mockImplementation(async ({ method }: { method: string }) => method === "eth_chainId" ? "0x14a34" : hash);
-    const quote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(99) };
+    const quote = { tokenAmount: BigInt(12), reserveIn: BigInt(30), maxReserveIn: BigInt(34), curveCost: BigInt(28), protocolFee: BigInt(1), creatorFee: BigInt(1), slippageBps: 100, deadline: BigInt(Math.floor(Date.now() / 1000) + 300) };
     try {
       const client = createExternalWalletClient({ request } as never, creator);
       await expect(submitExternalBuy(client, creator, token, quote)).resolves.toBe(hash);

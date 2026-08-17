@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +27,22 @@ type fakeRepo struct {
 type fakeETHUSDReader struct {
 	price ETHUSDPrice
 	err   error
+}
+
+type memoryObjectStore struct{ objects map[string][]byte }
+
+func (s *memoryObjectStore) Put(_ context.Context, key string, reader io.Reader) error {
+	if s.objects == nil {
+		s.objects = map[string][]byte{}
+	}
+	data, err := io.ReadAll(reader)
+	if err == nil {
+		s.objects[key] = data
+	}
+	return err
+}
+func (s *memoryObjectStore) Open(_ context.Context, key string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.objects[key])), nil
 }
 
 func (f fakeETHUSDReader) Read(context.Context) (ETHUSDPrice, error) { return f.price, f.err }
@@ -211,6 +229,73 @@ func TestOptionalPublicURLValidation(t *testing.T) {
 		if (err == nil) != tc.ok {
 			t.Fatalf("value=%q err=%v", tc.value, err)
 		}
+	}
+}
+
+func TestMetadataUploadAcceptsOnlyOneImageSourceAndPersistsFetchedBytes(t *testing.T) {
+	objects := &memoryObjectStore{}
+	fetches := []string{}
+	fetcher := func(_ context.Context, imageURL string) ([]byte, string, error) {
+		fetches = append(fetches, imageURL)
+		return []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, "image/png", nil
+	}
+	handler := newHandler(&fakeRepo{}, 84532, time.Second, slog.New(slog.NewJSONHandler(io.Discard, nil)), objects, nil, fetcher)
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for key, value := range map[string]string{"name": "Zonk", "symbol": "ZK", "initial_supply": "1000", "image_url": "https://images.example/token"} {
+		_ = writer.WriteField(key, value)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/token-metadata", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated || len(fetches) != 1 || len(objects.objects) != 2 || strings.Contains(w.Body.String(), "images.example") {
+		t.Fatalf("status=%d fetches=%v objects=%v body=%s", w.Code, fetches, objects.objects, w.Body.String())
+	}
+
+	body = &bytes.Buffer{}
+	writer = multipart.NewWriter(body)
+	for key, value := range map[string]string{"name": "Zonk", "symbol": "ZK", "initial_supply": "1000", "image_url": "https://images.example/token"} {
+		_ = writer.WriteField(key, value)
+	}
+	part, err := writer.CreateFormFile("image", "token.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("file"))
+	_ = writer.Close()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/token-metadata", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not both") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRemoteImageSSRFAndResponseBoundaries(t *testing.T) {
+	for _, raw := range []string{"http://example.com/image.png", "https://localhost/image.png", "https://127.0.0.1/image.png", "https://10.0.0.1/image.png", "https://169.254.169.254/image.png"} {
+		if _, err := validateRemoteImageURL(context.Background(), raw); err == nil {
+			t.Fatalf("expected URL rejection for %s", raw)
+		}
+	}
+	if _, err := validateRemoteImageURL(context.Background(), "https://user:pass@example.com/image.png"); err == nil {
+		t.Fatal("expected credentials rejection")
+	}
+	if _, err := responseImageType("text/html"); err == nil {
+		t.Fatal("expected HTML rejection")
+	}
+	if _, err := readImageBytes(bytes.NewReader(bytes.Repeat([]byte{1}, maxImageBytes+1))); err == nil {
+		t.Fatal("expected oversized response rejection")
+	}
+	if _, err := detectedImageType([]byte("<html>")); err == nil {
+		t.Fatal("expected non-image rejection")
+	}
+	if _, err := validateRemoteImageURL(context.Background(), "https://127.0.0.1/redirect"); err == nil {
+		t.Fatal("expected redirect target rejection")
 	}
 }
 

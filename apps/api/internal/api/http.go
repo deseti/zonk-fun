@@ -8,10 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/go-chi/chi/v5"
 	"io"
 	"log/slog"
 	"math/big"
+	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -22,13 +25,16 @@ import (
 )
 
 type Handler struct {
-	repo    Repository
-	chainID int64
-	timeout time.Duration
-	logger  *slog.Logger
-	objects ObjectStore
-	ethUSD  ETHUSDReader
+	repo       Repository
+	chainID    int64
+	timeout    time.Duration
+	logger     *slog.Logger
+	objects    ObjectStore
+	ethUSD     ETHUSDReader
+	fetchImage imageFetcher
 }
+
+type imageFetcher func(context.Context, string) ([]byte, string, error)
 
 func NewHandler(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger) http.Handler {
 	return NewHandlerWithObjectStore(repo, chainID, timeout, logger, nil)
@@ -37,13 +43,16 @@ func NewHandlerWithObjectStore(repo Repository, chainID int64, timeout time.Dura
 	return NewHandlerWithDependencies(repo, chainID, timeout, logger, objects, nil)
 }
 func NewHandlerWithDependencies(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger, objects ObjectStore, ethUSD ETHUSDReader) http.Handler {
+	return newHandler(repo, chainID, timeout, logger, objects, ethUSD, fetchRemoteImage)
+}
+func newHandler(repo Repository, chainID int64, timeout time.Duration, logger *slog.Logger, objects ObjectStore, ethUSD ETHUSDReader, fetchImage imageFetcher) http.Handler {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger, objects: objects, ethUSD: ethUSD}
+	h := &Handler{repo: repo, chainID: chainID, timeout: timeout, logger: logger, objects: objects, ethUSD: ethUSD, fetchImage: fetchImage}
 	r := chi.NewRouter()
 	r.Use(requestID)
 	r.Use(localCORS)
@@ -110,6 +119,15 @@ const maxImageBytes = 5 << 20
 
 var transactionHashRE = regexp.MustCompile(`^0x[0-9a-fA-F]{64}$`)
 
+const maxImageRedirects = 3
+
+var supportedImageTypes = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+	"image/gif":  ".gif",
+}
+
 func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.objects == nil {
 		writeError(w, 503, "storage_unavailable", "metadata storage is unavailable")
@@ -160,33 +178,49 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_supply", "initial supply must be a positive integer in base units")
 		return
 	}
-	file, header, e := r.FormFile("image")
+	imageURLInput := strings.TrimSpace(r.FormValue("image_url"))
+	file, header, fileErr := r.FormFile("image")
+	if fileErr == nil && imageURLInput != "" {
+		file.Close()
+		writeError(w, 400, "invalid_image", "provide either an image file or image URL, not both")
+		return
+	}
+	var data []byte
+	var contentType string
+	var e error
+	if fileErr == nil {
+		defer file.Close()
+		if header.Size <= 0 || header.Size > maxImageBytes {
+			writeError(w, 400, "invalid_image", "image must be at most 5 MB")
+			return
+		}
+		data, e = readImageBytes(file)
+		if e != nil {
+			writeError(w, 400, "invalid_image", "image could not be read")
+			return
+		}
+		contentType, e = detectedImageType(data)
+	} else if imageURLInput != "" {
+		if h.fetchImage == nil {
+			writeError(w, 503, "storage_unavailable", "remote image ingestion is unavailable")
+			return
+		}
+		data, contentType, e = h.fetchImage(r.Context(), imageURLInput)
+	} else {
+		writeError(w, 400, "invalid_image", "an image file or HTTPS image URL is required")
+		return
+	}
 	if e != nil {
-		writeError(w, 400, "invalid_image", "an image is required")
+		writeError(w, 400, "invalid_image", "image must be a supported PNG, JPEG, WebP, or GIF no larger than 5 MB")
 		return
 	}
-	defer file.Close()
-	if header.Size <= 0 || header.Size > maxImageBytes {
-		writeError(w, 400, "invalid_image", "image must be at most 5 MB")
+	detectedType, detectErr := detectedImageType(data)
+	if detectErr != nil || detectedType != contentType {
+		writeError(w, 400, "invalid_image", "image must be PNG, JPEG, WebP, or GIF")
 		return
 	}
-	data, e := io.ReadAll(io.LimitReader(file, maxImageBytes+1))
-	if e != nil || len(data) > maxImageBytes {
-		writeError(w, 400, "invalid_image", "image could not be read")
-		return
-	}
-	contentType := http.DetectContentType(data)
-	ext := ""
-	switch contentType {
-	case "image/png":
-		ext = ".png"
-	case "image/jpeg":
-		ext = ".jpg"
-	case "image/webp":
-		ext = ".webp"
-	case "image/gif":
-		ext = ".gif"
-	default:
+	ext, ok := supportedImageTypes[contentType]
+	if !ok {
 		writeError(w, 400, "invalid_image", "image must be PNG, JPEG, WebP, or GIF")
 		return
 	}
@@ -221,6 +255,149 @@ func (h *Handler) uploadMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, draft)
+}
+
+func readImageBytes(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxImageBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxImageBytes {
+		return nil, errors.New("image exceeds the maximum size")
+	}
+	return data, nil
+}
+
+func detectedImageType(data []byte) (string, error) {
+	contentType := http.DetectContentType(data)
+	if _, ok := supportedImageTypes[contentType]; !ok {
+		return "", errors.New("unsupported image type")
+	}
+	return contentType, nil
+}
+
+func fetchRemoteImage(ctx context.Context, rawURL string) ([]byte, string, error) {
+	u, err := validateRemoteImageURL(ctx, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	transport := &http.Transport{
+		Proxy:       nil,
+		DialContext: secureImageDialContext,
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxImageRedirects {
+				return errors.New("too many image redirects")
+			}
+			_, redirectErr := validateRemoteImageURL(req.Context(), req.URL.String())
+			return redirectErr
+		},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, "", fmt.Errorf("remote image returned HTTP %d", response.StatusCode)
+	}
+	if response.ContentLength > maxImageBytes {
+		return nil, "", errors.New("remote image exceeds the maximum size")
+	}
+	data, err := readImageBytes(response.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	headerType, err := responseImageType(response.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, "", err
+	}
+	detectedType, err := detectedImageType(data)
+	if err != nil || detectedType != headerType {
+		return nil, "", errors.New("remote response is not a supported image")
+	}
+	return data, detectedType, nil
+}
+
+func responseImageType(raw string) (string, error) {
+	contentType, _, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return "", errors.New("remote response has an invalid content type")
+	}
+	if _, ok := supportedImageTypes[contentType]; !ok {
+		return "", errors.New("remote response is not a supported image")
+	}
+	return contentType, nil
+}
+
+func validateRemoteImageURL(ctx context.Context, rawURL string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || len(rawURL) > 2048 {
+		return nil, errors.New("image URL must use HTTPS without credentials")
+	}
+	if err := rejectPrivateImageHost(ctx, u.Hostname()); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func rejectPrivateImageHost(ctx context.Context, hostname string) error {
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return errors.New("image URL host is not allowed")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateImageIP(ip) {
+			return errors.New("image URL host is not allowed")
+		}
+		return nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return errors.New("image URL host could not be resolved")
+	}
+	for _, ip := range ips {
+		if isPrivateImageIP(ip) {
+			return errors.New("image URL host is not allowed")
+		}
+	}
+	return nil
+}
+
+func isPrivateImageIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
+}
+
+func secureImageDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return nil, errors.New("image URL host could not be resolved")
+	}
+	dialer := &net.Dialer{}
+	var lastErr error
+	for _, ip := range ips {
+		if isPrivateImageIP(ip) {
+			lastErr = errors.New("image URL host is not allowed")
+			continue
+		}
+		connection, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return connection, nil
+		}
+		lastErr = dialErr
+	}
+	if lastErr == nil {
+		lastErr = errors.New("image URL host could not be reached")
+	}
+	return nil, lastErr
 }
 func (h *Handler) finalizeMetadata(w http.ResponseWriter, r *http.Request) {
 	var in struct {

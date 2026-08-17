@@ -149,6 +149,7 @@ export async function submitBuy(client: SmartWalletClientType, account: Address,
   const curve = await resolveCurveAddress(token);
   if (!curve) throw new Error("Curve address is not configured for this token.");
   const deadline = quote.deadline;
+  assertBuyQuoteFresh(quote);
   assertReady();
   await publicClient.simulateContract({
     address: curve,
@@ -158,6 +159,7 @@ export async function submitBuy(client: SmartWalletClientType, account: Address,
     account,
     value: quote.maxReserveIn,
   });
+  assertBuyQuoteFresh(quote);
   assertReady();
   return sendSmartWalletTransaction(client, { calls: [{ to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), deadline), value: quote.maxReserveIn }] }, {
     action: "Buy token",
@@ -193,6 +195,7 @@ export type ExternalWalletClient = ReturnType<typeof createExternalWalletClient>
 export async function submitExternalBuy(client: ExternalWalletClient, account: Address, token: Address, quote: BudgetBuyQuote, assertReady: () => void = () => undefined): Promise<Hash> {
   const curve = await resolveCurveAddress(token);
   if (!curve) throw new Error("Curve address is not configured for this token.");
+  assertBuyQuoteFresh(quote);
   assertReady();
   await publicClient.simulateContract({
     address: curve,
@@ -202,6 +205,7 @@ export async function submitExternalBuy(client: ExternalWalletClient, account: A
     account,
     value: quote.maxReserveIn,
   });
+  assertBuyQuoteFresh(quote);
   assertReady();
   return client.sendTransaction({ account, chain: baseSepolia, to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), quote.deadline), value: quote.maxReserveIn });
 }
@@ -283,6 +287,10 @@ function assertExternalSellDeadline(quote: ProtectedSellQuote) {
   if (BigInt(Math.floor(Date.now() / 1000)) >= quote.deadline) {
     throw new Error("This quote expired during wallet approval. Request a fresh quote before selling.");
   }
+}
+
+export function assertBuyQuoteFresh(quote: Pick<BudgetBuyQuote, "deadline">) {
+  if (BigInt(Math.floor(Date.now() / 1000)) >= quote.deadline) throw new Error("This quote expired. Request a fresh quote before buying.");
 }
 
 export function privyTransactionUiOptions(input: { action: string; description: string }): SendTransactionModalUIOptions {

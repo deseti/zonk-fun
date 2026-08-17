@@ -1,10 +1,15 @@
-export type TransactionStatus = "idle" | "preparing" | "awaiting_wallet" | "submitted" | "confirming" | "confirmed" | "failed" | "rejected";
+import { EXACT_GRADUATION_GROSS } from "@zonk/contracts-sdk";
+
+export type TransactionStatus = "idle" | "preparing" | "awaiting_wallet" | "submitted" | "confirming" | "confirmed" | "failed" | "rejected" | "dev_buy_preparing" | "dev_buy_awaiting_wallet" | "dev_buy_submitted" | "dev_buy_confirming" | "dev_buy_confirmed" | "dev_buy_failed" | "dev_buy_rejected";
 export type TransactionState = { status: TransactionStatus; hash?: `0x${string}`; error?: string };
 export const idleTransaction: TransactionState = { status: "idle" };
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
-export type CreateTokenInput = { name: string; symbol: string; description: string; websiteUrl: string; xUrl: string; telegramUrl: string; discordUrl: string; image: File | null };
+export type CreateTokenInput = { name: string; symbol: string; description: string; websiteUrl: string; xUrl: string; telegramUrl: string; discordUrl: string; imageFile: File | null; imageUrl: string; imageSource: "file" | "url"; devBuyEth: string };
+
+export const DEFAULT_BUY_SLIPPAGE_BPS = 100;
+export const MAX_DEV_BUY_WEI = EXACT_GRADUATION_GROSS;
 
 const SOCIAL_HOSTS = {
   xUrl: ["x.com", "twitter.com"],
@@ -24,10 +29,55 @@ export function validateCreateToken(input: CreateTokenInput): Record<string, str
   validateOptionalURL(input.xUrl, "xUrl", errors, SOCIAL_HOSTS.xUrl);
   validateOptionalURL(input.telegramUrl, "telegramUrl", errors, SOCIAL_HOSTS.telegramUrl);
   validateOptionalURL(input.discordUrl, "discordUrl", errors, SOCIAL_HOSTS.discordUrl);
-  if (!input.image) errors.image = "Select a token image.";
-  else if (!ACCEPTED_IMAGE_TYPES.includes(input.image.type as typeof ACCEPTED_IMAGE_TYPES[number])) errors.image = "Use PNG, JPEG, WebP, or GIF.";
-  else if (input.image.size > MAX_IMAGE_BYTES) errors.image = "Image must be at most 5 MB.";
+  if (input.imageSource === "file") {
+    if (!input.imageFile) errors.image = "Select a token image.";
+    else if (!ACCEPTED_IMAGE_TYPES.includes(input.imageFile.type as typeof ACCEPTED_IMAGE_TYPES[number])) errors.image = "Use PNG, JPEG, WebP, or GIF.";
+    else if (input.imageFile.size > MAX_IMAGE_BYTES) errors.image = "Image must be at most 5 MB.";
+  } else {
+    const imageURL = input.imageUrl.trim();
+    if (!imageURL) errors.image = "Enter an image URL.";
+    else if (!isHTTPSImageURL(imageURL)) errors.image = "Image URL must use HTTPS.";
+  }
+  if (input.devBuyEth.trim()) {
+    try { parseDevBuyAmount(input.devBuyEth); }
+    catch (error) { errors.devBuyEth = error instanceof Error ? error.message : "Enter a valid Dev buy amount."; }
+  }
   return errors;
+}
+
+export function parseDevBuyAmount(value: string): bigint {
+  const trimmed = value.trim();
+  if (!trimmed) return BigInt(0);
+  if (!/^\d+(\.\d{1,18})?$/.test(trimmed)) throw new Error("Dev buy must be a valid ETH amount with up to 18 decimals.");
+  const [whole, fraction = ""] = trimmed.split(".");
+  const parsed = BigInt(whole) * BigInt(10) ** BigInt(18) + BigInt((fraction + "0".repeat(18)).slice(0, 18));
+  if (parsed < BigInt(0)) throw new Error("Dev buy cannot be negative.");
+  if (parsed > MAX_DEV_BUY_WEI) throw new Error("Dev buy cannot exceed the current curve graduation limit.");
+  return parsed;
+}
+
+export class DevBuyFailure extends Error {
+  constructor(
+    message: string,
+    public readonly tokenAddress: `0x${string}`,
+    public readonly creationHash: `0x${string}`,
+    public readonly retryDevBuy: (report: (state: TransactionState) => void) => Promise<`0x${string}`>,
+    public readonly retryable: boolean,
+    public readonly buyHash?: `0x${string}`,
+    public readonly rejected = false,
+  ) {
+    super(message);
+    this.name = "DevBuyFailure";
+  }
+}
+
+export function isHTTPSImageURL(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password && Boolean(parsed.hostname) && value.length <= 2048;
+  } catch {
+    return false;
+  }
 }
 
 function validateOptionalURL(value: string, field: string, errors: Record<string, string>, allowedHosts?: readonly string[]) {

@@ -3,6 +3,7 @@ import { encodeFunctionData, getAddress, parseEventLogs, type Address, type Hex 
 export const BASE_SEPOLIA_CHAIN_ID = 84532 as const;
 export const FIXED_TOKEN_SUPPLY = BigInt("1000000000000000000000000000");
 export const CURVE_ALLOCATION = BigInt("800000000000000000000000000");
+export const EXACT_GRADUATION_GROSS = BigInt("3030303030303030303");
 
 export const baseSepolia = {
   id: BASE_SEPOLIA_CHAIN_ID,

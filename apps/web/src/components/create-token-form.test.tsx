@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { CreateTokenForm, type CreateExecution } from "./create-token-form";
+import { DevBuyFailure } from "@/lib/transactions";
 
 const token = "0x0000000000000000000000000000000000000011" as const;
 const hash = `0x${"ab".repeat(32)}` as const;
@@ -16,7 +17,7 @@ async function completeForm(user: ReturnType<typeof userEvent.setup>, file = ima
   await user.type(screen.getByLabelText("Name"), "Zonk");
   await user.type(screen.getByLabelText("Symbol"), "ZK");
   await user.type(screen.getByLabelText("About"), "A test token");
-  await user.upload(screen.getByLabelText("Image"), file);
+  await user.upload(screen.getByLabelText("Image file"), file);
 }
 
 function renderForm(overrides: Partial<ComponentProps<typeof CreateTokenForm>> = {}) {
@@ -44,7 +45,7 @@ describe("CreateTokenForm", () => {
     expect(screen.getByLabelText("X / Twitter URL")).toBeTruthy();
     expect(screen.getByLabelText("Telegram URL")).toBeTruthy();
     expect(screen.getByLabelText("Discord URL")).toBeTruthy();
-    expect((screen.getByLabelText("Image") as HTMLInputElement).type).toBe("file");
+    expect((screen.getByLabelText("Image file") as HTMLInputElement).type).toBe("file");
 
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
@@ -69,6 +70,28 @@ describe("CreateTokenForm", () => {
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     expect(screen.getByText(/Use PNG/)).toBeTruthy();
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("supports one image source at a time and submits HTTPS image URLs", async () => {
+    const user = userEvent.setup();
+    const { execute } = renderForm();
+    await user.click(screen.getByRole("button", { name: "Image URL" }));
+    expect(screen.queryByLabelText("Image file")).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "Image URL" }), "http://example.com/token.png");
+    await user.click(screen.getByRole("button", { name: "Review metadata" }));
+    expect(screen.getByText("Image URL must use HTTPS.")).toBeTruthy();
+    await user.clear(screen.getByRole("textbox", { name: "Image URL" }));
+    await user.type(screen.getByLabelText("Name"), "Zonk");
+    await user.type(screen.getByLabelText("Symbol"), "ZK");
+    await user.type(screen.getByRole("textbox", { name: "Image URL" }), "https://example.com/token.png");
+    expect((screen.getByRole("textbox", { name: "Image URL" }) as HTMLInputElement).value).toBe("https://example.com/token.png");
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+    expect(screen.queryByRole("textbox", { name: "Image URL" })).toBeNull();
+    await user.upload(screen.getByLabelText("Image file"), image());
+    expect((screen.getByLabelText("Image file") as HTMLInputElement).files).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Review metadata" }));
+    await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ imageSource: "file", imageFile: expect.any(File), imageUrl: "" }), expect.any(Function));
   });
 
   it("rejects oversized images", async () => {
@@ -112,9 +135,31 @@ describe("CreateTokenForm", () => {
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
     expect(await screen.findByText(/Confirm the transaction in Privy/)).toBeTruthy();
     expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0].devBuyEth).toBe("");
     finish?.({ tokenAddress: token, hash });
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(token));
     expect(screen.getByText(/Token creation confirmed/)).toBeTruthy();
+  });
+
+  it("shows Dev buy in review and preserves the created token for a safe retry", async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn(async (report: Parameters<DevBuyFailure["retryDevBuy"]>[0]) => {
+      report({ status: "dev_buy_confirmed", hash });
+      return hash;
+    });
+    const execute = vi.fn<CreateExecution>().mockRejectedValue(new DevBuyFailure("Token created successfully, but the Dev buy was rejected.", token, hash, retry, true, undefined, true));
+    const onSuccess = vi.fn();
+    renderForm({ execute, onSuccess });
+    await completeForm(user);
+    await user.type(screen.getByLabelText("Dev buy"), "0.10");
+    await user.click(screen.getByRole("button", { name: "Review metadata" }));
+    expect(screen.getByText("0.10 ETH")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
+    expect(screen.getByRole("link", { name: "Open token" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Retry dev buy" }));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(token));
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it("shows a rejected transaction failure", async () => {
@@ -123,7 +168,7 @@ describe("CreateTokenForm", () => {
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
-    expect(await screen.findByText("Transaction rejected.")).toBeTruthy();
+    expect(await screen.findByText(/Transaction rejected\./)).toBeTruthy();
     expect(screen.getByText("User rejected the request")).toBeTruthy();
   });
 

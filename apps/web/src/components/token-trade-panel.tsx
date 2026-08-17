@@ -7,6 +7,7 @@ import { formatNative, formatTokenAmount, formatWeiUsd, type EthUsdReference } f
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 import {
   clearPendingTrade,
+  DEFAULT_BUY_SLIPPAGE_BPS,
   persistPendingTrade,
   readPendingTrade,
   type TradeSide,
@@ -56,7 +57,7 @@ export function TokenTradePanel(props: Props) {
   const [initialRecovery] = useState(() => props.walletAddress ? readPendingTrade(props.tokenAddress, props.walletAddress) : null);
   const [side, setSide] = useState<TradeSide>(initialRecovery?.side ?? "buy");
   const [amount, setAmount] = useState("");
-  const [slippage, setSlippage] = useState("1.00");
+  const [slippage, setSlippage] = useState((DEFAULT_BUY_SLIPPAGE_BPS / 100).toFixed(2));
   const [quoteRecord, setQuoteRecord] = useState<QuoteRecord | null>(null);
   const [quoteStale, setQuoteStale] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);

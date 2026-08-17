@@ -8,8 +8,11 @@ import { getAddress, type Address } from "viem";
 import { CreateTokenForm, type CreateExecution } from "@/components/create-token-form";
 import { api, ApiClientError } from "@/lib/api";
 import { confirmCreatedToken, configuredCurveInitialization, createExternalWalletClient, submitCreateToken, submitExternalCreateToken } from "@/lib/contracts";
+import { executeDevBuy, DevBuyAttemptError } from "@/lib/dev-buy";
 import { hasPrivyAppId, isPrivyEmbeddedWallet, parsePrivyChainId } from "@/lib/wallet";
+import { DevBuyFailure, parseDevBuyAmount, type TransactionState } from "@/lib/transactions";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
+import { useState } from "react";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -29,6 +32,11 @@ function PrivyCreatePage() {
   const embedded = wallets.find(isPrivyEmbeddedWallet);
   const chainId = mode === "external" ? activeChainId : parsePrivyChainId(embedded?.chainId);
   const creator = mode === "external" ? activeAddress : user?.smartWallet?.address;
+  const [hasDevBuy, setHasDevBuy] = useState(false);
+
+  const performDevBuy = async (tokenAddress: Address, creatorAddress: Address, amount: bigint, creationHash: `0x${string}`, report: (state: TransactionState) => void) => {
+    return executeDevBuy({ tokenAddress, creatorAddress, amount, creationHash, walletMode: mode, externalWallet, getClientForChain, report });
+  };
 
   const execute: CreateExecution = async (input, report) => {
     if (chainId !== 84532) throw new Error(`Switch the ${mode} wallet to Base Sepolia before creating a token.`);
@@ -44,7 +52,8 @@ function PrivyCreatePage() {
     form.set("telegram_url", input.telegramUrl.trim());
     form.set("discord_url", input.discordUrl.trim());
     form.set("initial_supply", FIXED_TOKEN_SUPPLY.toString());
-    form.set("image", input.image!);
+    if (input.imageSource === "file") form.set("image", input.imageFile!);
+    else form.set("image_url", input.imageUrl.trim());
     report({ status: "preparing" });
     const draft = await api.uploadMetadata(form);
     report({ status: "awaiting_wallet" });
@@ -69,13 +78,25 @@ function PrivyCreatePage() {
       catch (error) { if (!(error instanceof ApiClientError) || error.code !== "not_indexed") throw error; await pause(2000); }
     }
     if (!token) throw new Error("The transaction confirmed, but indexing did not finish in time.");
-    return { tokenAddress: getAddress(created.token), hash };
+    const tokenAddress = getAddress(created.token);
+    const devBuyAmount = parseDevBuyAmount(input.devBuyEth);
+    if (devBuyAmount === BigInt(0)) return { tokenAddress, hash };
+    const retryDevBuy = (retryReport: (state: TransactionState) => void) => performDevBuy(tokenAddress, creatorAddress, devBuyAmount, hash, retryReport);
+    try {
+      const devBuyHash = await retryDevBuy(report);
+      return { tokenAddress, hash, devBuyHash };
+    } catch (error) {
+      if (error instanceof DevBuyAttemptError) {
+        throw new DevBuyFailure(`Token created successfully, but the Dev buy ${error.rejected ? "was rejected" : error.retryable ? "could not be completed" : "needs confirmation"}.`, tokenAddress, hash, retryDevBuy, error.retryable, error.buyHash, error.rejected);
+      }
+      throw error;
+    }
   };
 
   return <main className="container page-shell flex-1">
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-      <div className="min-w-0"><p className="eyebrow">Token launch</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1><p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300">Publish its identity, then confirm one Base Sepolia factory transaction.</p><CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} /></div>
-      <aside className="panel lg:sticky lg:top-24" aria-label="Launch overview"><p className="eyebrow">What happens</p><ol className="mt-5 grid gap-5"><LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." /><LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." /><LaunchStep number="3" title="Confirmation" copy="After Base Sepolia confirms and the indexer catches up, your token page opens." /></ol><div className="mt-6 border-t border-white/8 pt-5 text-sm leading-6 text-zinc-400"><p><span className="font-medium text-zinc-200">Cost:</span> network gas only; trading fees are shown in protected quotes later.</p></div></aside>
+      <div className="min-w-0"><p className="eyebrow">Token launch</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1><p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300">Publish its identity, then confirm your Base Sepolia launch transaction{hasDevBuy ? " and optional initial buy" : ""}.</p><CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} onDevBuyChange={setHasDevBuy} /></div>
+      <aside className="panel lg:sticky lg:top-24" aria-label="Launch overview"><p className="eyebrow">What happens</p><ol className="mt-5 grid gap-5"><LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." /><LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." />{hasDevBuy && <LaunchStep number="3" title="Initial buy" copy={`A separate ${mode === "external" ? "external-wallet" : "wallet"} confirmation buys from the bonding curve.`} />}<LaunchStep number={hasDevBuy ? "4" : "3"} title={hasDevBuy ? "Complete" : "Confirmation"} copy="After Base Sepolia confirms and the indexer catches up, your token page opens." /></ol><div className="mt-6 border-t border-white/8 pt-5 text-sm leading-6 text-zinc-400"><p><span className="font-medium text-zinc-200">Cost:</span> network gas{hasDevBuy ? " plus your optional Dev buy amount; each transaction is confirmed separately" : " only"}.</p></div></aside>
     </div>
   </main>;
 }
