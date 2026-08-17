@@ -27,6 +27,39 @@ function renderForm(overrides: Partial<ComponentProps<typeof CreateTokenForm>> =
 }
 
 describe("CreateTokenForm", () => {
+  it("keeps the form focused on editable metadata and omits supply presentation", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    expect(screen.queryByText("Permanent supply settings")).toBeNull();
+    expect(screen.queryByText("Fixed supply")).toBeNull();
+    expect(screen.queryByText("Creator allocation")).toBeNull();
+    expect(screen.queryByText("Curve inventory")).toBeNull();
+    expect(screen.queryByText("Full allocation")).toBeNull();
+    expect(screen.queryByText("1,000,000,000")).toBeNull();
+    expect(screen.getByLabelText("Name")).toBeTruthy();
+    expect(screen.getByLabelText("Symbol")).toBeTruthy();
+    expect(screen.getByLabelText("About")).toBeTruthy();
+    expect(screen.getByLabelText("Website URL")).toBeTruthy();
+    expect(screen.getByLabelText("X / Twitter URL")).toBeTruthy();
+    expect(screen.getByLabelText("Telegram URL")).toBeTruthy();
+    expect(screen.getByLabelText("Discord URL")).toBeTruthy();
+    expect((screen.getByLabelText("Image") as HTMLInputElement).type).toBe("file");
+
+    await completeForm(user);
+    await user.click(screen.getByRole("button", { name: "Review metadata" }));
+
+    expect(screen.queryByText("Permanent supply settings")).toBeNull();
+    expect(screen.queryByText("Fixed supply")).toBeNull();
+    expect(screen.queryByText("Creator allocation")).toBeNull();
+    expect(screen.queryByText("Curve inventory")).toBeNull();
+    expect(screen.queryByText("Full allocation")).toBeNull();
+    expect(screen.queryByText("Initial purchase")).toBeNull();
+    expect(screen.queryByText("1,000,000,000")).toBeNull();
+    expect(screen.getByText("Zonk")).toBeTruthy();
+    expect(screen.getByText("ZK")).toBeTruthy();
+  });
+
   it("rejects invalid metadata and unsupported images", async () => {
     const user = userEvent.setup({ applyAccept: false });
     const { execute } = renderForm();
