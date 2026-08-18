@@ -44,7 +44,7 @@ export function DiscoveryMarketplace() {
         <SectionHeading eyebrow="Discovery" title="All Launches" id="all-launches-heading" copy="Browse live API-backed launches without leaving the market." />
         <div className="flex items-center justify-between gap-3 lg:justify-end">
           <div className="safe-scroll -mx-1 flex min-w-0 gap-1 px-1 pb-1" role="tablist" aria-label="Filter launches">
-            {filters.map((item) => <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} className={`market-filter ${filter === item.id ? "market-filter-active" : ""}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}
+            {filters.map((item) => <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} className={`market-filter min-h-11 ${filter === item.id ? "market-filter-active" : ""}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}
           </div>
           <div className="flex flex-none items-center rounded-lg border border-white/10 bg-black/20 p-1" aria-label="Launch view">
             <ViewButton label="Grid view" active={view === "grid"} onClick={() => setView("grid")}>▦</ViewButton>

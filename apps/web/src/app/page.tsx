@@ -11,8 +11,8 @@ export default function Home() {
             <span className="badge-success"><span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" />Live testnet</span>
             <span className="badge-neutral">Base Sepolia · 84532</span>
           </div>
-          <h1 id="home-heading" className="mt-4 text-3xl font-semibold leading-tight tracking-[-0.045em] text-white sm:text-4xl lg:text-[2.75rem]">Discover what&apos;s launching on Zonk.</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400 sm:text-base">Explore community tokens, follow live indexed markets, and trade transparent bonding curves on Base.</p>
+          <h1 id="home-heading" className="mt-3 text-[1.7rem] font-semibold leading-tight tracking-[-0.045em] text-white sm:mt-4 sm:text-4xl lg:text-[2.75rem]">Discover what&apos;s launching on Zonk.</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400 sm:mt-3 sm:text-base">Explore community tokens, follow live indexed markets, and trade transparent bonding curves on Base.</p>
         </div>
         <div className="flex flex-wrap gap-2.5">
           <Link href="#all-launches" className="button-primary">Explore tokens <span aria-hidden>↓</span></Link>

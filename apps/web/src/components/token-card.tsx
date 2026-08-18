@@ -25,29 +25,29 @@ export function TokenCard({ token, variant = "grid" }: { token: Token; variant?:
     <span className="hidden flex-none text-zinc-600 transition-transform group-hover:translate-x-0.5 group-hover:text-cyan-300 sm:block" aria-hidden>→</span>
   </article>;
 
-  return <article className="group market-card relative min-w-0 overflow-hidden transition duration-150 hover:-translate-y-0.5 hover:border-cyan-300/30 hover:bg-[#0d1721]">
+  return <article className="group market-card relative min-w-0 overflow-hidden transition duration-150 hover:border-cyan-300/30 hover:bg-[#0d1721] max-md:flex max-md:min-h-16 max-md:items-center max-md:gap-3 max-md:p-3 md:hover:-translate-y-0.5">
     <CardLink token={token} />
-    <div className="relative p-2 pb-0">
-      {image}
-      <span className="absolute left-4 top-4 rounded-full border border-black/20 bg-black/65 px-2 py-1 text-[0.62rem] font-semibold text-zinc-200 backdrop-blur">Block #{formatCount(token.created_at.block_number)}</span>
-      {token.x_url && <span className="absolute right-4 top-4 rounded-full border border-cyan-300/20 bg-[#071219]/85 px-2 py-1 text-[0.62rem] font-bold text-cyan-200 backdrop-blur">X linked</span>}
+    <div className="relative max-md:flex-none p-2 pb-0 max-md:p-0">
+      <TokenImage token={token} className="aspect-[4/3] w-full rounded-xl max-md:h-14 max-md:w-14 max-md:aspect-auto" />
+      <span className="absolute left-4 top-4 rounded-full border border-black/20 bg-black/65 px-2 py-1 text-[0.62rem] font-semibold text-zinc-200 backdrop-blur max-md:hidden">Block #{formatCount(token.created_at.block_number)}</span>
+      {token.x_url && <span className="absolute right-4 top-4 rounded-full border border-cyan-300/20 bg-[#071219]/85 px-2 py-1 text-[0.62rem] font-bold text-cyan-200 backdrop-blur max-md:hidden">X linked</span>}
     </div>
-    <div className="p-3.5">
+    <div className="min-w-0 flex-1 p-3.5 max-md:p-0">
       <Identity token={token} />
-      <div className="mt-3 flex items-end justify-between gap-3 border-b border-white/7 pb-3">
-        <div className="min-w-0"><p className="text-[0.65rem] text-zinc-600">USD price</p><p className="mt-0.5 truncate text-base font-semibold text-zinc-50" title={formatWeiUsd(token.metrics.current_price, reference)}>{formatWeiUsd(token.metrics.current_price, reference)}</p></div>
+      <div className="mt-3 flex items-end justify-between gap-3 border-b border-white/7 pb-3 max-md:mt-1.5 max-md:border-0 max-md:pb-0">
+        <div className="min-w-0"><p className="text-[0.65rem] text-zinc-600 max-md:hidden">USD price</p><p className="mt-0.5 truncate text-base font-semibold text-zinc-50 max-md:text-sm" title={formatWeiUsd(token.metrics.current_price, reference)}>{formatWeiUsd(token.metrics.current_price, reference)}</p></div>
         <div className="text-right" title="The current API does not expose a 24-hour price-change field"><p className="text-[0.65rem] text-zinc-600">24h</p><p className="mt-0.5 text-sm font-semibold text-zinc-600">—</p></div>
       </div>
-      <dl className="mt-3 grid grid-cols-3 gap-2">
+      <dl className="mt-3 grid grid-cols-3 gap-2 max-md:mt-2">
         <Metric label="FDV" value={formatWeiUsd(token.metrics.fully_diluted_value, reference)} />
         <Metric label="Volume" value={formatWeiUsd(token.metrics.volume, reference)} />
         <Metric label="Holders" value={formatCount(token.metrics.holder_count)} />
       </dl>
-      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/7 pt-3 text-[0.68rem]">
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/7 pt-3 text-[0.68rem] max-md:hidden">
         <p className="min-w-0 text-zinc-600">Age <span className="ml-1 text-zinc-400" title="The current API exposes launch block provenance but not launch time">—</span></p>
         <p className="min-w-0 truncate text-right text-zinc-600">Creator <span className="font-mono text-zinc-400">{shortAddress(token.creator)}</span></p>
       </div>
-      <Progress value={progress} />
+      <div className="max-md:hidden"><Progress value={progress} /></div>
     </div>
   </article>;
 }

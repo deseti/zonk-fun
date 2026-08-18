@@ -547,4 +547,53 @@ describe("TokenTradePanel", () => {
     expect(confirm.mock.calls[0][0]).toMatch(/duplicate trade or additional loss/i);
     expect(localStorage.length).toBe(0);
   });
+
+  it("applies 10% and 50% buy presets from the native balance", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Use 10% of ETH balance" }));
+    expect((screen.getByLabelText("ETH amount") as HTMLInputElement).value).toBe("0.1");
+    await user.click(screen.getByRole("button", { name: "Use 50% of ETH balance" }));
+    expect((screen.getByLabelText("ETH amount") as HTMLInputElement).value).toBe("0.5");
+  });
+
+  it("uses the exact token balance for sell MAX", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Sell" }));
+    await user.click(screen.getByRole("button", { name: "Use exact token balance" }));
+    expect((screen.getByLabelText("ZONK amount") as HTMLInputElement).value).toBe("5");
+  });
+
+  it("reserves ETH for gas on buy MAX", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Use maximum ETH after gas reserve" }));
+    expect((screen.getByLabelText("ETH amount") as HTMLInputElement).value).toBe("0.999");
+  });
+
+  it("invalidates an existing quote when a preset changes the amount", async () => {
+    const user = userEvent.setup();
+    const { quoteBuy } = renderPanel();
+    await requestBuyQuote(user);
+    expect(screen.getByRole("button", { name: "Confirm buy" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Use 50% of ETH balance" }));
+    expect(screen.queryByRole("button", { name: "Confirm buy" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Get quote" }));
+    expect(await screen.findByRole("button", { name: "Confirm buy" })).toBeTruthy();
+    expect(quoteBuy).toHaveBeenLastCalledWith(BigInt("500000000000000000"), 100);
+  });
+
+  it("disables presets when balances are unavailable", () => {
+    renderPanel({ state: undefined, statePending: true });
+    expect((screen.getByRole("button", { name: "Use 10% of ETH balance" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Use 50% of ETH balance" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Use maximum ETH after gas reserve" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables buy MAX when the ETH balance cannot cover the gas reserve", () => {
+    renderPanel({ state: { ...state, nativeBalance: BigInt("1000000000000000") } });
+    expect((screen.getByRole("button", { name: "Use maximum ETH after gas reserve" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Use 10% of ETH balance" }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });

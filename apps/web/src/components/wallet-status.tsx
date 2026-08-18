@@ -8,7 +8,7 @@ import { isBaseSepolia, validAddress } from "@/lib/chain";
 import { derivePrivyWalletState, isExternalWallet, isPrivyEmbeddedWallet, parsePrivyChainId, privyExternalWalletList, privyLoginMethods } from "@/lib/wallet";
 import { useActiveWallet, walletModeLabel } from "@/providers/active-wallet-provider";
 
-const short = (value?: string) => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "";
+const shorten = (value?: string) => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "";
 
 export async function logoutPrivy(logout: () => Promise<void>, setError: (message: string | null) => void) {
   setError(null);
@@ -27,7 +27,7 @@ export async function switchPrivyEmbeddedWallet(
   return getClientForChain({ id: baseSepolia.id });
 }
 
-export function WalletStatus({ compact = false }: { compact?: boolean }) {
+export function WalletStatus({ compact = false, short = false }: { compact?: boolean; short?: boolean }) {
   const { ready, authenticated, user, logout, error } = usePrivy();
   const { wallets } = useWallets();
   const { client, getClientForChain } = useSmartWallets();
@@ -38,6 +38,7 @@ export function WalletStatus({ compact = false }: { compact?: boolean }) {
   const [switchPending, setSwitchPending] = useState(false);
   const [chainClient, setChainClient] = useState<SmartWalletClientType | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
   const { login } = useLogin({
     onComplete: () => setLoginPending(false),
     onError: () => setLoginPending(false),
@@ -77,14 +78,23 @@ export function WalletStatus({ compact = false }: { compact?: boolean }) {
     error,
   });
 
-  if (!authenticated) return <div className={`flex items-center gap-2 ${compact ? "flex-wrap" : ""}`} aria-live="polite">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className={`button-primary ${compact ? "w-full" : ""}`} disabled={loginPending} onClick={runLogin}>{loginPending ? "Opening Privy…" : "Log in: wallet, email, or social"}</button></div>;
+  if (!authenticated) return <div className={`flex items-center gap-2 ${compact ? "flex-wrap" : ""}`} aria-live="polite">{(state === "logging_in" || loginPending) && <span className="text-sm text-zinc-400">Privy loading…</span>}{(state === "error" || actionError) && <span className="text-sm text-red-300">Privy is unavailable</span>}<button className={`button-primary ${compact ? "w-full" : ""} ${short ? "min-h-11 px-3 text-sm" : ""}`} disabled={loginPending} onClick={runLogin}>{loginPending ? "Opening Privy…" : short ? "Log in" : "Log in: wallet, email, or social"}</button></div>;
 
   const activeChainId = mode === "external" ? parsePrivyChainId(external?.chainId) : chainId;
 
-  return <div className={`flex min-w-0 flex-wrap items-center gap-2 ${compact ? "w-full" : "justify-end"}`} aria-label="Privy account controls" aria-live="polite">
-    <span className={`min-w-0 text-xs text-white ${compact ? "w-full rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2" : ""}`}><span className="text-zinc-500">Active:</span> {walletModeLabel(mode)} <span className="font-mono text-cyan-200">{short(activeAddress)}</span></span>
-    {embeddedAddress && <button className={mode === "embedded" ? "button-primary" : "button-secondary"} aria-pressed={mode === "embedded"} onClick={() => selectMode("embedded")}>Embedded {short(embeddedAddress)}</button>}
-    {externalAddress ? <button className={mode === "external" ? "button-primary" : "button-secondary"} aria-pressed={mode === "external"} onClick={() => selectMode("external")}>External {short(externalAddress)}</button> : <button className="button-secondary" onClick={runConnectExternal}>Connect external wallet</button>}
+  if (short && !accountOpen) {
+    return <div className="flex items-center" aria-label="Privy account controls">
+      <button type="button" className="button-secondary min-h-11 max-w-[9.5rem] px-3 text-xs" aria-expanded={false} aria-label="Open account" onClick={() => setAccountOpen(true)}>
+        <span className="truncate">{shorten(activeAddress) || "Account"}</span>
+      </button>
+    </div>;
+  }
+
+  const controls = <div className={`flex min-w-0 flex-wrap items-center gap-2 ${compact || short ? "w-full" : "justify-end"}`} aria-label="Privy account controls" aria-live="polite">
+    {short && <button type="button" className="button-ghost min-h-11 px-2 text-xs" aria-expanded={true} onClick={() => setAccountOpen(false)}>Close</button>}
+    <span className={`min-w-0 text-xs text-white ${compact ? "w-full rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2" : ""}`}><span className="text-zinc-500">Active:</span> {walletModeLabel(mode)} <span className="font-mono text-cyan-200">{shorten(activeAddress)}</span></span>
+    {embeddedAddress && <button className={mode === "embedded" ? "button-primary" : "button-secondary"} aria-pressed={mode === "embedded"} onClick={() => selectMode("embedded")}>Embedded {shorten(embeddedAddress)}</button>}
+    {externalAddress ? <button className={mode === "external" ? "button-primary" : "button-secondary"} aria-pressed={mode === "external"} onClick={() => selectMode("external")}>External {shorten(externalAddress)}</button> : <button className="button-secondary" onClick={runConnectExternal}>Connect external wallet</button>}
     {actionError && <span className={`${compact ? "w-full" : ""} text-xs text-red-300`}>{actionError}</span>}
     {!ready && <span className="text-sm text-zinc-400">Privy loading…</span>}
     {ready && error && <span className="text-sm text-red-300">Privy is unavailable</span>}
@@ -93,6 +103,19 @@ export function WalletStatus({ compact = false }: { compact?: boolean }) {
     {ready && !error && activeChainId === baseSepolia.id && <span className="badge-success">Base Sepolia</span>}
     <button className={compact ? "button-ghost" : "button-secondary"} onClick={() => void runLogout()}>Log out</button>
   </div>;
+
+  if (short) {
+    return <div className="relative">
+      <button type="button" className="button-secondary min-h-11 max-w-[9.5rem] px-3 text-xs" aria-expanded={true} aria-label="Close account" onClick={() => setAccountOpen(false)}>
+        <span className="truncate">{shorten(activeAddress) || "Account"}</span>
+      </button>
+      <div className="absolute right-0 top-[calc(100%+0.4rem)] z-50 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-white/10 bg-[#09111a] p-3 shadow-2xl shadow-black/50">
+        {controls}
+      </div>
+    </div>;
+  }
+
+  return controls;
 }
 
 export function PrivyWalletUnavailable() {

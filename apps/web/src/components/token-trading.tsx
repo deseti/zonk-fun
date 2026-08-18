@@ -188,7 +188,7 @@ function TradeHistory({ tokenAddress, symbol, walletAddress }: { tokenAddress: A
         <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">{trade.source === "uniswap_v3" ? "Uniswap V3" : "Curve"} · #{trade.block_number}</span></div>
         <div><p className="font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p></div>
         <p className="address truncate" title={trade.trader}>{trade.trader}</p>
-        <a className="inline-block text-cyan-300 hover:text-cyan-200 lg:text-right" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
+        <a className="inline-flex min-h-11 items-center text-cyan-300 hover:text-cyan-200 lg:justify-end lg:text-right" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
       </li>)}
     </ul>}{!reference && <p className="border-t border-white/8 px-4 py-3 text-xs text-zinc-600">USD unavailable · exact indexed ETH values remain visible.</p>}
   </section>;

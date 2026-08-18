@@ -94,11 +94,37 @@ function PrivyCreatePage() {
   };
 
   return <main className="container page-shell flex-1">
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-      <div className="min-w-0"><p className="eyebrow">Token launch</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1><p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300">Publish its identity, then confirm your Base Sepolia launch transaction{hasDevBuy ? " and optional initial buy" : ""}.</p><CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} onDevBuyChange={setHasDevBuy} /></div>
-      <aside className="panel lg:sticky lg:top-24" aria-label="Launch overview"><p className="eyebrow">What happens</p><ol className="mt-5 grid gap-5"><LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." /><LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." />{hasDevBuy && <LaunchStep number="3" title="Initial buy" copy={`A separate ${mode === "external" ? "external-wallet" : "wallet"} confirmation buys from the bonding curve.`} />}<LaunchStep number={hasDevBuy ? "4" : "3"} title={hasDevBuy ? "Complete" : "Confirmation"} copy="After Base Sepolia confirms and the indexer catches up, your token page opens." /></ol><div className="mt-6 border-t border-white/8 pt-5 text-sm leading-6 text-zinc-400"><p><span className="font-medium text-zinc-200">Cost:</span> network gas{hasDevBuy ? " plus your optional Dev buy amount; each transaction is confirmed separately" : " only"}.</p></div></aside>
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-8">
+      <div className="min-w-0">
+        <p className="eyebrow">Token launch</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:mt-4 sm:text-base sm:leading-7">Publish its identity, then confirm your Base Sepolia launch transaction{hasDevBuy ? " and optional initial buy" : ""}.</p>
+        <details className="panel mt-5 lg:hidden">
+          <summary className="min-h-11 cursor-pointer text-sm font-semibold text-white">What happens</summary>
+          <LaunchOverview hasDevBuy={hasDevBuy} walletMode={mode} compact />
+        </details>
+        <CreateTokenForm authenticated={authenticated} chainId={chainId} walletAddress={creator as Address | undefined} walletMode={mode} execute={execute} onSuccess={(address) => router.push(`/token/${address}`)} onDevBuyChange={setHasDevBuy} />
+      </div>
+      <aside className="panel hidden lg:sticky lg:top-24 lg:block" aria-label="Launch overview">
+        <p className="eyebrow">What happens</p>
+        <LaunchOverview hasDevBuy={hasDevBuy} walletMode={mode} />
+      </aside>
     </div>
   </main>;
+}
+
+function LaunchOverview({ hasDevBuy, walletMode, compact = false }: { hasDevBuy: boolean; walletMode: "embedded" | "external"; compact?: boolean }) {
+  return <>
+    <ol className={compact ? "mt-4 grid gap-3" : "mt-5 grid gap-5"}>
+      <LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." />
+      <LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." />
+      {hasDevBuy && <LaunchStep number="3" title="Initial buy" copy={`A separate ${walletMode === "external" ? "external-wallet" : "wallet"} confirmation buys from the bonding curve.`} />}
+      <LaunchStep number={hasDevBuy ? "4" : "3"} title={hasDevBuy ? "Complete" : "Confirmation"} copy="After Base Sepolia confirms and the indexer catches up, your token page opens." />
+    </ol>
+    <div className={`${compact ? "mt-4" : "mt-6"} border-t border-white/8 pt-4 text-sm leading-6 text-zinc-400`}>
+      <p><span className="font-medium text-zinc-200">Cost:</span> network gas{hasDevBuy ? " plus your optional Dev buy amount; each transaction is confirmed separately" : " only"}.</p>
+    </div>
+  </>;
 }
 
 function LaunchStep({ number, title, copy }: { number: string; title: string; copy: string }) {

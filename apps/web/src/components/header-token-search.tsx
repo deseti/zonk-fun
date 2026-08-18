@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api, apiAssetURL } from "@/lib/api";
 
-export function HeaderTokenSearch({ id = "global-token-search" }: { id?: string }) {
+export function HeaderTokenSearch({ id = "global-token-search", autoFocus = false, onNavigate }: { id?: string; autoFocus?: boolean; onNavigate?: () => void }) {
   const [search, setSearch] = useState("");
   const term = search.trim();
   const query = useQuery({
@@ -24,6 +24,7 @@ export function HeaderTokenSearch({ id = "global-token-search" }: { id?: string 
       onChange={(event) => setSearch(event.target.value)}
       maxLength={64}
       autoComplete="off"
+      autoFocus={autoFocus}
       placeholder="Search name, symbol, or address"
       className="header-search-input pl-9"
       role="combobox"
@@ -34,7 +35,7 @@ export function HeaderTokenSearch({ id = "global-token-search" }: { id?: string 
       {query.isPending && <p className="px-3 py-3 text-xs text-zinc-500">Searching indexed tokens…</p>}
       {query.isError && <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-rose-300"><span>Search unavailable</span><button type="button" className="text-cyan-300" onClick={() => void query.refetch()}>Retry</button></div>}
       {query.data?.items.length === 0 && <p className="px-3 py-3 text-xs text-zinc-500">No indexed tokens found.</p>}
-      {query.data?.items.map((token) => <Link key={token.address} href={`/token/${token.address}`} onClick={() => setSearch("")} className="flex min-w-0 items-center gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-white/5">
+      {query.data?.items.map((token) => <Link key={token.address} href={`/token/${token.address}`} onClick={() => { setSearch(""); onNavigate?.(); }} className="flex min-h-11 min-w-0 items-center gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-white/5">
         <TokenThumb image={token.image_url} symbol={token.symbol} />
         <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-white">{token.name}</span><span className="block truncate text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-cyan-300">{token.symbol}</span></span>
         <span className="text-xs text-zinc-600" aria-hidden>→</span>

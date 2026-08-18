@@ -8,6 +8,7 @@ import { formatEther, formatUnits, parseEther, parseUnits, type Address, type Ha
 import { baseSepolia } from "@zonk/contracts-sdk";
 import { createExternalWalletClient, erc20TradeAbi, publicClient, sendSmartWalletTransaction } from "@/lib/contracts";
 import { selectActiveSigner, tradeInvalidationKeys } from "@/components/token-trading";
+import { TradeAmountPresets } from "@/components/trade-amount-presets";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { approvalCall, BASE_SEPOLIA_CHAIN_ID, buildGraduatedSwapTransaction, configuredUniswapV3, orchestrateGraduatedSwap, quoteGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, validateCanonicalPool, type GraduatedQuote, type GraduatedSwapTransaction } from "@/lib/uniswap-v3";
 
@@ -64,6 +65,11 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
     return () => window.clearTimeout(id);
   }, [amount, guard, requestQuote, side, slippage]);
 
+  const changeAmount = (value: string) => {
+    setAmount(value);
+    setQuote(undefined);
+  };
+
   const submit = async () => {
     if (busy.current || !quote || !poolQuery.data || !wallet || !stateQuery.data) return;
     const assertContext = () => {
@@ -110,7 +116,8 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
       <button className={side === "sell" ? "button-primary" : "button-secondary"} type="button" onClick={() => { setSide("sell"); setQuote(undefined); }} disabled={pending}>Sell {symbol}</button>
     </div>
     {guard ? <p className="status-box status-warning mt-4 text-sm">{guard}</p> : <>
-      <label className="mt-5 block text-xs text-zinc-500">Pay <span className="float-right">{side === "buy" ? "ETH" : symbol}</span><input className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 p-3 text-white" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value); setQuote(undefined); }} placeholder="0.0" /></label>
+      <label className="mt-5 block text-xs text-zinc-500">Pay <span className="float-right">{side === "buy" ? "ETH" : symbol}</span><input className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 p-3 text-white" aria-label={side === "buy" ? "ETH amount" : `${symbol} amount`} inputMode="decimal" value={amount} onChange={(event) => changeAmount(event.target.value)} placeholder="0.0" /></label>
+      <TradeAmountPresets side={side} nativeBalance={stateQuery.data?.eth} tokenBalance={stateQuery.data?.token} tokenDecimals={stateQuery.data?.decimals ?? 18} disabled={pending || Boolean(guard)} onSelect={changeAmount} />
       <p className="mt-1 text-xs text-zinc-600">Balance {stateQuery.data ? (side === "buy" ? formatEther(stateQuery.data.eth) : formatUnits(stateQuery.data.token, stateQuery.data.decimals)) : "…"}</p>
       <label className="mt-4 block text-xs text-zinc-500">Slippage (%)<input className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 p-3 text-white" inputMode="decimal" value={slippage} onChange={(event) => { setSlippage(event.target.value); setQuote(undefined); }} /></label>
       {quote && <div className="mt-4 rounded-lg border border-white/8 p-3 text-sm"><p>Receive ~ {formatUnits(quote.amountOut, side === "buy" ? stateQuery.data?.decimals ?? 18 : 18)} {side === "buy" ? symbol : "ETH"}</p><p className="mt-1 text-zinc-500">Minimum received {formatUnits(quote.minimumOut, side === "buy" ? stateQuery.data?.decimals ?? 18 : 18)} · Pool fee 1%</p></div>}

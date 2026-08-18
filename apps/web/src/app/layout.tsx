@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -22,6 +22,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Zonk.fun launch and trade community tokens",
   description: "A non-custodial token launchpad on Base Sepolia.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: RootLayoutProps) {

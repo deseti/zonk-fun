@@ -135,16 +135,21 @@ export function TokenChart({ tokenAddress, initialSupply, className = "mt-10" }:
     return () => { observer.disconnect(); chart.remove(); };
   }, [chartData, currency]);
 
-  const controls = <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
-    <label className="sr-only" htmlFor={`chart-metric-${tokenAddress}`}>Chart metric</label>
-    <select id={`chart-metric-${tokenAddress}`} aria-label="Chart metric" value={view} className="min-h-9 rounded-lg border border-white/10 bg-[#09141e] px-3 text-xs font-semibold text-zinc-200 outline-none transition focus:border-cyan-300/50" onChange={(event) => { setInspectedTime(null); setView(event.target.value as ChartView); }}>
-      <option value="price">Price</option>
-      <option value="fdv" disabled={!initialSupply}>FDV</option>
-    </select>
-    <label className="sr-only" htmlFor={`chart-timeframe-${tokenAddress}`}>Chart timeframe</label>
-    <select id={`chart-timeframe-${tokenAddress}`} aria-label="Chart timeframe" value={timeframe} className="min-h-9 rounded-lg border border-white/10 bg-[#09141e] px-3 text-xs font-semibold text-zinc-200 outline-none transition focus:border-cyan-300/50" onChange={(event) => { setInspectedTime(null); setTimeframe(event.target.value as ChartInterval); }}>
-      {TIMEFRAMES.map((item) => <option key={item} value={item}>{item}</option>)}
-    </select>
+  const controls = <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-nowrap sm:items-center">
+    <div className="flex min-w-0 items-center gap-2">
+      <label className="sr-only" htmlFor={`chart-metric-${tokenAddress}`}>Chart metric</label>
+      <select id={`chart-metric-${tokenAddress}`} aria-label="Chart metric" value={view} className="min-h-11 flex-1 rounded-lg border border-white/10 bg-[#09141e] px-3 text-xs font-semibold text-zinc-200 outline-none transition focus:border-cyan-300/50 sm:min-h-9 sm:flex-none" onChange={(event) => { setInspectedTime(null); setView(event.target.value as ChartView); }}>
+        <option value="price">Price</option>
+        <option value="fdv" disabled={!initialSupply}>FDV</option>
+      </select>
+      <label className="sr-only" htmlFor={`chart-timeframe-${tokenAddress}`}>Chart timeframe</label>
+      <select id={`chart-timeframe-${tokenAddress}`} aria-label="Chart timeframe" value={timeframe} className="min-h-11 flex-1 rounded-lg border border-white/10 bg-[#09141e] px-3 text-xs font-semibold text-zinc-200 outline-none transition focus:border-cyan-300/50 sm:min-h-9 sm:flex-none" onChange={(event) => { setInspectedTime(null); setTimeframe(event.target.value as ChartInterval); }}>
+        {TIMEFRAMES.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+    </div>
+    <div className="safe-scroll -mx-1 flex gap-1 px-1 sm:hidden" role="group" aria-label="Chart timeframes">
+      {TIMEFRAMES.map((item) => <button key={item} type="button" aria-pressed={timeframe === item} className={`min-h-11 min-w-11 flex-none rounded-lg px-3 text-xs font-semibold ${timeframe === item ? "bg-cyan-300/12 text-cyan-200" : "text-zinc-500"}`} onClick={() => { setInspectedTime(null); setTimeframe(item); }}>{item}</button>)}
+    </div>
   </div>;
 
   if (query.isPending) return <ChartState className={className} controls={controls} timeframe={timeframe} copy={`Loading canonical ${timeframe} candles and volume…`} loading />;
@@ -164,7 +169,7 @@ export function TokenChart({ tokenAddress, initialSupply, className = "mt-10" }:
       </div>
       {controls}
     </div>
-    <div className="bg-[#071019]"><div ref={container} className="h-[24rem] w-full sm:h-[30rem] lg:h-[40rem] xl:h-[44rem]" role="img" aria-label={`${view === "price" ? "Price" : "FDV"} candlestick chart with volume in ${currency}`} /></div>
+    <div className="bg-[#071019]"><div ref={container} className="h-[min(16.5rem,46dvh)] w-full min-[390px]:h-[min(18.5rem,48dvh)] sm:h-[28rem] lg:h-[40rem] xl:h-[44rem]" role="img" aria-label={`${view === "price" ? "Price" : "FDV"} candlestick chart with volume in ${currency}`} /></div>
     <p className="border-t border-white/8 px-4 py-3 text-xs leading-5 text-zinc-600">{reference ? `Chainlink reference updated ${new Date(reference.asOf).toLocaleString()}.` : "USD unavailable; the chart falls back to ETH-denominated indexed values."} No external pool feed is used before graduation.</p>
   </section>;
 }
@@ -174,7 +179,7 @@ function OHLCValue({ label, value }: { label: "O" | "H" | "L" | "C"; value: stri
 }
 
 function ChartState({ copy, controls, timeframe = "1h", error = false, loading = false, className }: { copy: string; controls: React.ReactNode; timeframe?: ChartInterval; error?: boolean; loading?: boolean; className: string }) {
-  return <section className={`terminal-panel ${className}`} aria-label="Price history"><div className="flex min-w-0 flex-col gap-3 border-b border-white/8 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold text-white">Market chart</h2><p className="mt-1 text-[0.65rem] text-zinc-600">Canonical V3 {timeframe} OHLC</p></div>{controls}</div><p className={`m-4 text-sm ${error ? "text-red-300" : "text-zinc-400"}`}>{copy}</p>{loading && <div className="skeleton m-4 h-64 rounded-xl sm:h-80" />}</section>;
+  return <section className={`terminal-panel ${className}`} aria-label="Price history"><div className="flex min-w-0 flex-col gap-3 border-b border-white/8 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold text-white">Market chart</h2><p className="mt-1 text-[0.65rem] text-zinc-600">Canonical V3 {timeframe} OHLC</p></div>{controls}</div><p className={`m-4 text-sm ${error ? "text-red-300" : "text-zinc-400"}`}>{copy}</p>{loading && <div className="skeleton m-4 h-52 rounded-xl sm:h-80" />}</section>;
 }
 
 export function formatChartValue(value: number, currency: "USD" | "ETH") {
