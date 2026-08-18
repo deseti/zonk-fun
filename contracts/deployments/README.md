@@ -7,43 +7,67 @@ Actual records should be saved locally as `base-sepolia.json`, which is ignored
 by Git. Never put a private key, mnemonic, RPC credential, or API key in this
 directory or in a committed environment file.
 
-`V3_GOVERNANCE_ADDRESS` and `V3_TREASURY_SAFE` are separate required roles.
-The deployment signer must be the configured governance address when
-`V3_BROADCAST=true`; the treasury is the protocol-fee recipient. Do not
-substitute either role unless the intended real-world responsibilities are
-deliberately the same.
+The canonical deployment guide is `contracts/docs/DEPLOY_V3_BASE_SEPOLIA.md`.
+This file is only a record/helper summary. The repository deploys the current
+endpoint-cp-v3 family; there is no V4 stack.
 
-## endpoint-cp-v3 Base Sepolia deployment
+## Required environment
 
-The repository supports only the endpoint-cp-v3 protocol. Deployment is
-performed by `DeployV3BaseSepolia`; it is a dry run unless `V3_BROADCAST=true`
-is explicitly provided in the protected process environment.
+Supply these through the protected process environment. Do not invent or
+hardcode addresses here. Protocol treasury and community treasury must be
+separate Safe addresses taken from the operator’s configuration.
+
+| Variable | Role |
+| --- | --- |
+| `V3_GOVERNANCE_ADDRESS` | Owner/governance; must equal the deployment signer |
+| `V3_TREASURY_SAFE` | Protocol treasury (FeeManagerV3) |
+| `V3_COMMUNITY_TREASURY_SAFE` | Community treasury (TokenCommunityVaultV3) |
+| `BASE_SEPOLIA_UNISWAP_V3_FACTORY` | Canonical Uniswap V3 factory |
+| `BASE_SEPOLIA_WETH` | Canonical WETH9 |
+| `BASE_SEPOLIA_NONFUNGIBLE_POSITION_MANAGER` | Canonical NPM |
+| `BASE_SEPOLIA_RPC_URL` | Base Sepolia RPC for `forge script` |
+
+`DEPLOYER_PRIVATE_KEY` is required by `DeployV3BaseSepolia.s.sol` so bootstrap
+calls simulate and (if approved) broadcast as governance. Do not print it, log
+it, or commit it to `.env` or this directory. The key’s address must equal
+`V3_GOVERNANCE_ADDRESS`.
+
+## Dry-run vs broadcast
+
+`DeployV3BaseSepolia` always uses `vm.startBroadcast(...)` so one-shot binds
+run as the governance signer. That does **not** send transactions by itself.
 
 ```bash
 cd contracts
-forge script script/DeployV3BaseSepolia.s.sol:DeployV3BaseSepolia \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
+forge script script/DeployV3BaseSepolia.s.sol \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-The script requires the Base Sepolia chain and validates the canonical Uniswap
-V3 factory, WETH, and Nonfungible Position Manager before deployment. Supply
-the required governance, treasury, and canonical-dependency variables through
-the protected process environment. Never place private keys, RPC URLs, or real
-deployment credentials in this document or an example manifest.
+That command is simulation only. Actual network submission requires the Foundry
+CLI `--broadcast` flag after an explicit Stage 5 approval. Do not use a custom
+`V3_BROADCAST` switch; the script no longer reads one.
 
-Deployment order is fixed and atomic where bindings are made:
+## Current deployment graph
 
 1. `FeeManagerV3`
 2. `GraduationManagerV3`
-3. `ZonkFactoryV3`, including its immutable token and curve deployers
-4. `PermanentLPFeeVaultV3`
-5. `PermanentLPCustodianDeployerV3`, including its settlement executor
-6. `GraduationManagerV3.bindDependenciesOnce`, which binds the vault,
-   custodian deployer, and canonical position manager
+3. `ZonkFactoryV3`
+4. `FeeManagerV3.setFactoryOnce`
+5. `GraduationManagerV3.setFactoryOnce`
+6. `TokenCommunityVaultV3`
+7. `TraderRewardsVaultV3`
+8. `TraderRewardsDistributorV3`
+9. `TraderRewardsVaultV3.setDistributorOnce`
+10. `FeeManagerV3.bindEcosystemVaultsOnce`
+11. `PermanentLPFeeVaultV3`
+12. `TokenCommunityVaultV3.setPermanentLPFeeVaultOnce`
+13. `TraderRewardsVaultV3.setPermanentLPFeeVaultOnce`
+14. `PermanentLPCustodianDeployerV3`
+15. `GraduationManagerV3.bindDependenciesOnce`
 
-The script verifies every deployed relationship before reporting addresses.
-Record those addresses in a deployment manifest based on
-`base-sepolia.example.json`; the example uses only zero-address placeholders.
+The script verifies the deployed relationships, then prints addresses. Record
+them in a local manifest based on `base-sepolia.example.json` (zero-address
+placeholders only).
 
 ## Launch and receipt verification
 
@@ -52,7 +76,7 @@ deploys and registers the token and curve. There is no seed, enable-trading,
 adapter-configuration, or manual graduation transaction in the V3 deployment
 flow.
 
-For a launch receipt, verify `TokenLaunchedV3` and its
+For a launch receipt, verify `TokenLaunchedV3` and
 `protocolVersion == "endpoint-cp-v3"`. For trades, verify `TokensBought` or
 `TokensSold` against the corresponding on-chain quote. On terminal settlement,
 verify `Graduated` from the curve and `GraduatedV3` from the graduation manager.

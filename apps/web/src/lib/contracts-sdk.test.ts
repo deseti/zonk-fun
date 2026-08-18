@@ -368,8 +368,14 @@ describe("curve trade SDK", () => {
     const trader = creator;
     const topics = encodeEventTopics({ abi: zonkCurveAbi, eventName, args: { token, [traderField]: trader } });
     const data = side === "buy"
-      ? encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [BigInt(10), BigInt(11), BigInt(12), BigInt(13), BigInt(1), BigInt(2), BigInt(3)])
-      : encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [BigInt(10), BigInt(11), BigInt(12), BigInt(1), BigInt(2)]);
+      ? encodeAbiParameters(
+        [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
+        [BigInt(10), BigInt(11), BigInt(12), BigInt(13), BigInt(3), BigInt(2), BigInt(1), BigInt(0), BigInt(0), BigInt(3)],
+      )
+      : encodeAbiParameters(
+        [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
+        [BigInt(10), BigInt(11), BigInt(12), BigInt(3), BigInt(2), BigInt(1), BigInt(0), BigInt(0)],
+      );
     const logTopics = topics.filter((topic): topic is Hex => typeof topic === "string");
     expect(parseTradeReceipt({ status: "success", logs: [{ address: factory, data, topics: logTopics }] }, factory, side)).toEqual({
       side,
@@ -380,6 +386,9 @@ describe("curve trade SDK", () => {
       curveValue: side === "buy" ? BigInt(12) : BigInt(12),
       protocolFee: BigInt(1),
       creatorFee: BigInt(2),
+      totalFee: BigInt(3),
+      communityFee: BigInt(0),
+      traderRewardsFee: BigInt(0),
     });
   });
 

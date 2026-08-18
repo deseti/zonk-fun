@@ -6,6 +6,8 @@ import {IPermanentLPCustodianDeployerV3} from "../../src/v3/interfaces/IPermanen
 import {IPermanentLPFeeVaultV3} from "../../src/v3/interfaces/IPermanentLPFeeVaultV3.sol";
 import {PermanentLPCustodianV3} from "../../src/v3/PermanentLPCustodianV3.sol";
 import {PermanentLPCustodianDeployerV3} from "../../src/v3/PermanentLPCustodianDeployerV3.sol";
+import {ZonkCurveV3} from "../../src/v3/ZonkCurveV3.sol";
+import {ZonkTokenV3} from "../../src/v3/ZonkTokenV3.sol";
 import {MockGraduationManagerV3} from "./mocks/MockGraduationManagerV3.sol";
 import {MockNonfungiblePositionManagerV3} from "./mocks/MockNonfungiblePositionManagerV3.sol";
 import {MockWETHV3} from "./mocks/MockUniswapV3.sol";
@@ -199,10 +201,14 @@ contract PermanentLPCustodianV3Test is ZonkV3TestBase {
         assertEq(weth.balanceOf(address(lpFeeVault)), 9 ether);
         assertEq(token.balanceOf(buyer), callerTokenBefore);
         assertEq(weth.balanceOf(buyer), callerWethBefore);
-        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 5 ether);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 5 ether);
-        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(weth)), 4.5 ether);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 4.5 ether);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 2.5 ether);
+        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 3 ether);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(token)), 3 ether);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(token)), 1.5 ether);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 2.25 ether);
+        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(weth)), 2.7 ether);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(weth)), 2.7 ether);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(weth)), 1.35 ether);
         assertEq(positions.ownerOf(1), address(custodian));
         assertEq(positions.ownerOf(2), buyer);
         assertEq(positions.getApproved(1), address(0));
@@ -218,14 +224,18 @@ contract PermanentLPCustodianV3Test is ZonkV3TestBase {
 
     function testOddRemainderZeroAndRepeatedCollectionAreSafe() public {
         _bindCanonicalPosition();
-        _fundCollectableFees(3, 1);
+        _fundCollectableFees(101, 1);
         custodian.collectFees();
-        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 1);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 2);
-        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(weth)), 0);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 1);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 25);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(token)), 30);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(token)), 15);
+        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 31);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 0);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(weth)), 0);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(weth)), 0);
+        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(weth)), 1);
         custodian.collectFees();
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 2);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(token)), 101);
     }
 
     function testLPWithdrawalsAreRecipientAndAssetIsolated() public {
@@ -238,12 +248,12 @@ contract PermanentLPCustodianV3Test is ZonkV3TestBase {
         uint256 creatorBefore = creator.balance;
         vm.prank(creator);
         lpFeeVault.claimLPFees(address(token));
-        assertEq(token.balanceOf(creator), 5 ether);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 4 ether);
+        assertEq(token.balanceOf(creator), 2.5 ether);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(weth)), 2 ether);
         vm.prank(treasury);
         lpFeeVault.claimLPFees(address(weth));
-        assertEq(weth.balanceOf(treasury), 4 ether);
-        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 5 ether);
+        assertEq(weth.balanceOf(treasury), 2.4 ether);
+        assertEq(lpFeeVault.protocolLPFeesAccrued(treasury, address(token)), 3 ether);
         creatorBefore;
     }
 
@@ -263,8 +273,98 @@ contract PermanentLPCustodianV3Test is ZonkV3TestBase {
         feeManager.acceptCreatorPayout(address(token));
         _fundCollectableFees(2 ether, 0);
         custodian.collectFees();
-        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 1 ether);
-        assertEq(lpFeeVault.creatorLPFeesAccrued(newRecipient, address(token)), 1 ether);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(creator, address(token)), 0.5 ether);
+        assertEq(lpFeeVault.creatorLPFeesAccrued(newRecipient, address(token)), 0.5 ether);
+    }
+
+    function testCommunityAndRewardsLPFeesForwardOnlyToCanonicalVaults() public {
+        _bindCanonicalPosition();
+        _fundCollectableFees(10 ether, 8 ether);
+        custodian.collectFees();
+
+        vm.prank(buyer);
+        lpFeeVault.fundCommunityVault(address(token), address(token));
+        vm.prank(buyer);
+        lpFeeVault.fundCommunityVault(address(token), address(weth));
+        vm.prank(buyer);
+        lpFeeVault.fundTraderRewardsVault(address(token), address(token));
+        vm.prank(buyer);
+        lpFeeVault.fundTraderRewardsVault(address(token), address(weth));
+
+        assertEq(communityVault.accrued(address(token), address(token)), 3 ether);
+        assertEq(communityVault.accrued(address(token), address(weth)), 2.4 ether);
+        assertEq(rewardsVault.accrued(address(token), address(token)), 1.5 ether);
+        assertEq(rewardsVault.accrued(address(token), address(weth)), 1.2 ether);
+        assertEq(token.balanceOf(address(communityVault)), 3 ether);
+        assertEq(weth.balanceOf(address(communityVault)), 2.4 ether);
+        assertEq(token.balanceOf(address(rewardsVault)), 1.5 ether);
+        assertEq(weth.balanceOf(address(rewardsVault)), 1.2 ether);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(token)), 5.5 ether);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(weth)), 4.4 ether);
+        assertEq(token.balanceOf(address(lpFeeVault)), 5.5 ether);
+        assertEq(weth.balanceOf(address(lpFeeVault)), 4.4 ether);
+
+        vm.expectRevert(IPermanentLPFeeVaultV3.NothingToClaimLPFees.selector);
+        lpFeeVault.fundCommunityVault(address(token), address(token));
+        vm.expectRevert(IPermanentLPFeeVaultV3.NothingToClaimLPFees.selector);
+        lpFeeVault.fundTraderRewardsVault(address(token), address(token));
+
+        vm.prank(creator);
+        lpFeeVault.claimLPFees(address(token));
+        vm.prank(treasury);
+        lpFeeVault.claimLPFees(address(token));
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(token)), 0);
+        assertEq(token.balanceOf(address(lpFeeVault)), 0);
+    }
+
+    function testMultipleLaunchTokensAndAssetsRemainIsolated() public {
+        _bindCanonicalPosition();
+        _fundCollectableFees(100, 200);
+        custodian.collectFees();
+
+        (ZonkTokenV3 tokenTwo, ZonkCurveV3 curveTwo) = _launch(makeAddr("secondCreator"), "Second", "TWO");
+        vm.prank(address(graduationManager));
+        PermanentLPCustodianV3 custodianTwo = PermanentLPCustodianV3(deployer.deployCustodian(address(tokenTwo)));
+        (address token0, address token1) =
+            address(tokenTwo) < address(weth) ? (address(tokenTwo), address(weth)) : (address(weth), address(tokenTwo));
+        positions.setPosition(2, address(custodianTwo), token0, token1, 10_000, -887_200, 887_200);
+        vm.prank(address(graduationManager));
+        custodianTwo.bindPosition(2);
+        vm.prank(address(curveTwo));
+        assertTrue(tokenTwo.transfer(address(positions), 400));
+        weth.mint(address(positions), 300);
+        positions.setCollectableFees(
+            2, token0 == address(tokenTwo) ? 400 : 300, token0 == address(tokenTwo) ? 300 : 400
+        );
+        custodianTwo.collectFees();
+
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(token)), 30);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(token), address(weth)), 60);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(tokenTwo), address(tokenTwo)), 120);
+        assertEq(lpFeeVault.communityLPFeesAccrued(address(tokenTwo), address(weth)), 90);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(token)), 15);
+        assertEq(lpFeeVault.traderRewardsLPFeesAccrued(address(tokenTwo), address(tokenTwo)), 60);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(weth)), 500);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(token)), 100);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(tokenTwo)), 400);
+    }
+
+    function testFuzzLPFeeBucketsAlwaysReconcileWithProtocolRemainder(uint128 rawAmount) public {
+        uint256 amount = bound(uint256(rawAmount), 1, 1_000_000_000 ether);
+        _bindCanonicalPosition();
+        _fundCollectableFees(amount, 0);
+        custodian.collectFees();
+
+        uint256 creatorAmount = lpFeeVault.creatorLPFeesAccrued(creator, address(token));
+        uint256 protocolAmount = lpFeeVault.protocolLPFeesAccrued(treasury, address(token));
+        uint256 communityAmount = lpFeeVault.communityLPFeesAccrued(address(token), address(token));
+        uint256 rewardsAmount = lpFeeVault.traderRewardsLPFeesAccrued(address(token), address(token));
+        assertEq(creatorAmount, amount * 25 / 100);
+        assertEq(communityAmount, amount * 30 / 100);
+        assertEq(rewardsAmount, amount * 15 / 100);
+        assertEq(creatorAmount + protocolAmount + communityAmount + rewardsAmount, amount);
+        assertEq(lpFeeVault.totalLPFeesAccrued(address(token)), amount);
+        assertEq(token.balanceOf(address(lpFeeVault)), amount);
     }
 
     function testVaultNotificationFailureRollsBackCollectedTransfers() public {

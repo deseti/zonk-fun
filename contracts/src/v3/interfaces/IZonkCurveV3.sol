@@ -4,15 +4,20 @@ pragma solidity ^0.8.20;
 interface IZonkCurveV3 {
     struct FeeSplit {
         uint256 totalFee;
-        uint256 protocolFee;
         uint256 creatorFee;
+        uint256 protocolFee;
+        uint256 communityFee;
+        uint256 traderRewardsFee;
     }
 
     struct BuyQuote {
         uint256 submittedGross;
         uint256 acceptedGross;
-        uint256 protocolFee;
+        uint256 totalFee;
         uint256 creatorFee;
+        uint256 protocolFee;
+        uint256 communityFee;
+        uint256 traderRewardsFee;
         uint256 netCurveInput;
         uint256 refund;
         uint256 tokensOut;
@@ -22,8 +27,11 @@ interface IZonkCurveV3 {
     struct SellQuote {
         uint256 tokensIn;
         uint256 grossCurveOutput;
-        uint256 protocolFee;
+        uint256 totalFee;
         uint256 creatorFee;
+        uint256 protocolFee;
+        uint256 communityFee;
+        uint256 traderRewardsFee;
         uint256 netSellerOutput;
     }
 
@@ -52,8 +60,11 @@ interface IZonkCurveV3 {
         uint256 acceptedGross,
         uint256 netCurveInput,
         uint256 tokensOut,
-        uint256 protocolFee,
+        uint256 totalFee,
         uint256 creatorFee,
+        uint256 protocolFee,
+        uint256 communityFee,
+        uint256 traderRewardsFee,
         uint256 refund
     );
     event TokensSold(
@@ -62,8 +73,11 @@ interface IZonkCurveV3 {
         uint256 tokensIn,
         uint256 grossCurveOutput,
         uint256 netSellerOutput,
+        uint256 totalFee,
+        uint256 creatorFee,
         uint256 protocolFee,
-        uint256 creatorFee
+        uint256 communityFee,
+        uint256 traderRewardsFee
     );
     event Graduated(
         address indexed token,
@@ -90,6 +104,7 @@ interface IZonkCurveV3 {
     function factory() external view returns (address);
     function token() external view returns (address);
     function creator() external view returns (address);
+    function feePolicyHash() external pure returns (bytes32);
     function grossRequiredForNet(uint256 netAmount) external pure returns (uint256);
     function splitFee(uint256 grossAmount) external pure returns (FeeSplit memory fees);
 }

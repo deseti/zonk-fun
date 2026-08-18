@@ -4,6 +4,9 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {FeeManagerV3} from "../../../src/v3/FeeManagerV3.sol";
 import {PermanentLPFeeVaultV3} from "../../../src/v3/PermanentLPFeeVaultV3.sol";
+import {TokenCommunityVaultV3} from "../../../src/v3/TokenCommunityVaultV3.sol";
+import {TraderRewardsDistributorV3} from "../../../src/v3/TraderRewardsDistributorV3.sol";
+import {TraderRewardsVaultV3} from "../../../src/v3/TraderRewardsVaultV3.sol";
 import {ZonkCurveV3} from "../../../src/v3/ZonkCurveV3.sol";
 import {ZonkFactoryV3} from "../../../src/v3/ZonkFactoryV3.sol";
 import {ZonkTokenV3} from "../../../src/v3/ZonkTokenV3.sol";
@@ -22,6 +25,9 @@ abstract contract ZonkV3TestBase is Test {
 
     FeeManagerV3 internal feeManager;
     PermanentLPFeeVaultV3 internal lpFeeVault;
+    TokenCommunityVaultV3 internal communityVault;
+    TraderRewardsVaultV3 internal rewardsVault;
+    TraderRewardsDistributorV3 internal rewardsDistributor;
     MockGraduationManagerV3 internal graduationManager;
     MockUniswapV3FactoryV3 internal uniswapFactory;
     MockWETHV3 internal weth;
@@ -37,7 +43,16 @@ abstract contract ZonkV3TestBase is Test {
         factory = new ZonkFactoryV3(address(feeManager), address(graduationManager));
         feeManager.setFactoryOnce(address(factory));
         graduationManager.setFactoryOnce(address(factory));
-        lpFeeVault = new PermanentLPFeeVaultV3(address(graduationManager), address(feeManager));
+        communityVault = new TokenCommunityVaultV3(address(this), treasury, address(feeManager));
+        rewardsVault = new TraderRewardsVaultV3(address(this), address(feeManager));
+        rewardsDistributor = new TraderRewardsDistributorV3(address(this), address(rewardsVault));
+        rewardsVault.setDistributorOnce(address(rewardsDistributor));
+        feeManager.bindEcosystemVaultsOnce(address(communityVault), address(rewardsVault));
+        lpFeeVault = new PermanentLPFeeVaultV3(
+            address(graduationManager), address(feeManager), address(communityVault), address(rewardsVault)
+        );
+        communityVault.setPermanentLPFeeVaultOnce(address(lpFeeVault));
+        rewardsVault.setPermanentLPFeeVaultOnce(address(lpFeeVault));
         (token, curve) = _launch(creator, "Endpoint Zonk", "EPZ");
         vm.deal(buyer, 100 ether);
     }

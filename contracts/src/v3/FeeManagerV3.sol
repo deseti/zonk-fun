@@ -8,6 +8,9 @@ import {IFeeManagerV3} from "./interfaces/IFeeManagerV3.sol";
 import {IZonkCurveV3} from "./interfaces/IZonkCurveV3.sol";
 import {IZonkFactoryV3} from "./interfaces/IZonkFactoryV3.sol";
 import {IZonkTokenV3} from "./interfaces/IZonkTokenV3.sol";
+import {ITokenCommunityVaultV3} from "./interfaces/ITokenCommunityVaultV3.sol";
+import {ITraderRewardsVaultV3} from "./interfaces/ITraderRewardsVaultV3.sol";
+import {EndpointConstantsV3} from "./libraries/EndpointConstantsV3.sol";
 
 /// @notice Pull-based custody of endpoint curve ETH fees and recipient lifecycle only.
 contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
@@ -16,6 +19,7 @@ contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
 
     address public override factory;
     address public override factoryBootstrapAuthority;
+    address public override ecosystemBootstrapAuthority;
     address public override treasury;
     address public override pendingTreasury;
     uint64 public override pendingTreasuryAcceptAfter;
@@ -26,15 +30,26 @@ contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
     mapping(address token => uint256 amount) public override creatorFeesAccrued;
     uint256 public override protocolFeesAccrued;
     uint256 public override totalCreatorFeesAccrued;
+    uint256 public override communityFeesAccrued;
+    uint256 public override traderRewardsFeesAccrued;
+    mapping(address token => uint256 amount) public override communityFeesAccruedByToken;
+    mapping(address token => uint256 amount) public override traderRewardsFeesAccruedByToken;
+    address public override communityVault;
+    address public override traderRewardsVault;
 
     constructor(address governance, address initialTreasury) Ownable(governance) {
         if (initialTreasury == address(0)) revert InvalidTreasury();
         factoryBootstrapAuthority = governance;
+        ecosystemBootstrapAuthority = governance;
         treasury = initialTreasury;
     }
 
     function protocolVersionHash() external pure override returns (bytes32) {
         return PROTOCOL_VERSION_HASH;
+    }
+
+    function feePolicyHash() external pure override returns (bytes32) {
+        return EndpointConstantsV3.FEE_POLICY_HASH;
     }
 
     function setFactoryOnce(address factory_) external override {
@@ -49,6 +64,27 @@ contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
         factoryBootstrapAuthority = address(0);
         emit FactorySet(factory_);
         emit FactoryBootstrapConsumed(consumedAuthority);
+    }
+
+    function bindEcosystemVaultsOnce(address communityVault_, address traderRewardsVault_) external override {
+        if (communityVault != address(0) || traderRewardsVault != address(0)) revert EcosystemVaultsAlreadySet();
+        if (msg.sender != ecosystemBootstrapAuthority || ecosystemBootstrapAuthority == address(0)) {
+            revert UnauthorizedBootstrap();
+        }
+        if (
+            communityVault_ == address(0) || traderRewardsVault_ == address(0) || communityVault_ == traderRewardsVault_
+                || communityVault_.code.length == 0 || traderRewardsVault_.code.length == 0
+                || ITokenCommunityVaultV3(communityVault_).feeManager() != address(this)
+                || ITraderRewardsVaultV3(traderRewardsVault_).feeManager() != address(this)
+                || ITokenCommunityVaultV3(communityVault_).protocolVersionHash() != PROTOCOL_VERSION_HASH
+                || ITraderRewardsVaultV3(traderRewardsVault_).protocolVersionHash() != PROTOCOL_VERSION_HASH
+                || ITokenCommunityVaultV3(communityVault_).feePolicyHash() != EndpointConstantsV3.FEE_POLICY_HASH
+                || ITraderRewardsVaultV3(traderRewardsVault_).feePolicyHash() != EndpointConstantsV3.FEE_POLICY_HASH
+        ) revert InvalidEcosystemVault();
+        communityVault = communityVault_;
+        traderRewardsVault = traderRewardsVault_;
+        ecosystemBootstrapAuthority = address(0);
+        emit EcosystemVaultsSet(communityVault_, traderRewardsVault_);
     }
 
     function registerToken(address token, address curve, address creator) external override {
@@ -72,13 +108,33 @@ contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
         emit TokenRegistered(token, curve, creator, creator);
     }
 
-    function depositFees(address token, uint256 protocolFee, uint256 creatorFee, bool isBuy) external payable override {
+    function depositFees(
+        address token,
+        uint256 totalFee,
+        uint256 creatorFee,
+        uint256 protocolFee,
+        uint256 communityFee,
+        uint256 traderRewardsFee,
+        bool isBuy
+    ) external payable override {
         if (curveOf[token] != msg.sender) revert UnauthorizedCurve();
-        if (msg.value != protocolFee + creatorFee) revert InvalidFeeValue();
+        if (msg.value != totalFee) revert InvalidFeeValue();
+        uint256 remaining = totalFee;
+        if (creatorFee > remaining) revert InvalidFeeSplit();
+        remaining -= creatorFee;
+        if (protocolFee > remaining) revert InvalidFeeSplit();
+        remaining -= protocolFee;
+        if (communityFee > remaining) revert InvalidFeeSplit();
+        remaining -= communityFee;
+        if (traderRewardsFee != remaining) revert InvalidFeeSplit();
         protocolFeesAccrued += protocolFee;
         creatorFeesAccrued[token] += creatorFee;
         totalCreatorFeesAccrued += creatorFee;
-        emit FeesDeposited(token, msg.sender, isBuy, protocolFee, creatorFee);
+        communityFeesAccrued += communityFee;
+        traderRewardsFeesAccrued += traderRewardsFee;
+        communityFeesAccruedByToken[token] += communityFee;
+        traderRewardsFeesAccruedByToken[token] += traderRewardsFee;
+        emit FeesDeposited(token, msg.sender, isBuy, totalFee, creatorFee, protocolFee, communityFee, traderRewardsFee);
     }
 
     function proposeCreatorPayout(address token, address proposedPayout) external override {
@@ -152,8 +208,30 @@ contract FeeManagerV3 is IFeeManagerV3, Ownable2Step, ReentrancyGuard {
         emit CreatorFeesClaimed(token, payout, msg.sender, amount);
     }
 
-    function totalLiabilities() external view returns (uint256) {
-        return protocolFeesAccrued + totalCreatorFeesAccrued;
+    function fundCommunityVault(address token) external override nonReentrant returns (uint256 amount) {
+        address vault = communityVault;
+        if (vault == address(0)) revert EcosystemVaultsNotSet();
+        amount = communityFeesAccruedByToken[token];
+        if (amount == 0) revert NothingToFund();
+        communityFeesAccruedByToken[token] = 0;
+        communityFeesAccrued -= amount;
+        ITokenCommunityVaultV3(vault).depositNative{value: amount}(token);
+        emit CommunityVaultFunded(token, vault, amount, msg.sender);
+    }
+
+    function fundTraderRewardsVault(address token) external override nonReentrant returns (uint256 amount) {
+        address vault = traderRewardsVault;
+        if (vault == address(0)) revert EcosystemVaultsNotSet();
+        amount = traderRewardsFeesAccruedByToken[token];
+        if (amount == 0) revert NothingToFund();
+        traderRewardsFeesAccruedByToken[token] = 0;
+        traderRewardsFeesAccrued -= amount;
+        ITraderRewardsVaultV3(vault).depositNative{value: amount}(token);
+        emit TraderRewardsVaultFunded(token, vault, amount, msg.sender);
+    }
+
+    function totalLiabilities() external view override returns (uint256) {
+        return protocolFeesAccrued + totalCreatorFeesAccrued + communityFeesAccrued + traderRewardsFeesAccrued;
     }
 
     receive() external payable {

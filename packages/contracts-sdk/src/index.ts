@@ -98,6 +98,31 @@ export function parseTokenLaunchedReceipt(receipt: { status: string; logs: reado
   return { token: getAddress(args.token), curve: getAddress(args.curve), creator: getAddress(args.creator), protocolVersion: args.protocolVersion, totalSupply: args.totalSupply, curveAllocation: args.curveAllocation, lpAllocation: args.lpAllocation, canonicalPool: getAddress(args.canonicalPool) };
 }
 
+const zonkCurveBuyQuoteComponents = [
+  { name: "submittedGross", type: "uint256" },
+  { name: "acceptedGross", type: "uint256" },
+  { name: "totalFee", type: "uint256" },
+  { name: "creatorFee", type: "uint256" },
+  { name: "protocolFee", type: "uint256" },
+  { name: "communityFee", type: "uint256" },
+  { name: "traderRewardsFee", type: "uint256" },
+  { name: "netCurveInput", type: "uint256" },
+  { name: "refund", type: "uint256" },
+  { name: "tokensOut", type: "uint256" },
+  { name: "reachesGraduation", type: "bool" },
+] as const;
+
+const zonkCurveSellQuoteComponents = [
+  { name: "tokensIn", type: "uint256" },
+  { name: "grossCurveOutput", type: "uint256" },
+  { name: "totalFee", type: "uint256" },
+  { name: "creatorFee", type: "uint256" },
+  { name: "protocolFee", type: "uint256" },
+  { name: "communityFee", type: "uint256" },
+  { name: "traderRewardsFee", type: "uint256" },
+  { name: "netSellerOutput", type: "uint256" },
+] as const;
+
 export const zonkCurveAbi = [
   { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "token", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -105,12 +130,13 @@ export const zonkCurveAbi = [
   { type: "function", name: "soldSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "activeEthReserve", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "graduated", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-  { type: "function", name: "quoteBuy", stateMutability: "view", inputs: [{ name: "grossInput", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "submittedGross", type: "uint256" }, { name: "acceptedGross", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netCurveInput", type: "uint256" }, { name: "refund", type: "uint256" }, { name: "tokensOut", type: "uint256" }, { name: "reachesGraduation", type: "bool" }] }] },
-  { type: "function", name: "quoteSell", stateMutability: "view", inputs: [{ name: "tokensIn", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "tokensIn", type: "uint256" }, { name: "grossCurveOutput", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netSellerOutput", type: "uint256" }] }] },
-  { type: "function", name: "buy", stateMutability: "payable", inputs: [{ name: "minTokensOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "submittedGross", type: "uint256" }, { name: "acceptedGross", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netCurveInput", type: "uint256" }, { name: "refund", type: "uint256" }, { name: "tokensOut", type: "uint256" }, { name: "reachesGraduation", type: "bool" }] }] },
-  { type: "function", name: "sell", stateMutability: "nonpayable", inputs: [{ name: "tokensIn", type: "uint256" }, { name: "minEthOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: [{ name: "tokensIn", type: "uint256" }, { name: "grossCurveOutput", type: "uint256" }, { name: "protocolFee", type: "uint256" }, { name: "creatorFee", type: "uint256" }, { name: "netSellerOutput", type: "uint256" }] }] },
-  { type: "event", name: "TokensBought", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "buyer", type: "address", indexed: true }, { name: "submittedGross", type: "uint256", indexed: false }, { name: "acceptedGross", type: "uint256", indexed: false }, { name: "netCurveInput", type: "uint256", indexed: false }, { name: "tokensOut", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }, { name: "refund", type: "uint256", indexed: false }] },
-  { type: "event", name: "TokensSold", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "seller", type: "address", indexed: true }, { name: "tokensIn", type: "uint256", indexed: false }, { name: "grossCurveOutput", type: "uint256", indexed: false }, { name: "netSellerOutput", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }] },
+  { type: "function", name: "feePolicyHash", stateMutability: "pure", inputs: [], outputs: [{ type: "bytes32" }] },
+  { type: "function", name: "quoteBuy", stateMutability: "view", inputs: [{ name: "grossInput", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: zonkCurveBuyQuoteComponents }] },
+  { type: "function", name: "quoteSell", stateMutability: "view", inputs: [{ name: "tokensIn", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: zonkCurveSellQuoteComponents }] },
+  { type: "function", name: "buy", stateMutability: "payable", inputs: [{ name: "minTokensOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: zonkCurveBuyQuoteComponents }] },
+  { type: "function", name: "sell", stateMutability: "nonpayable", inputs: [{ name: "tokensIn", type: "uint256" }, { name: "minEthOut", type: "uint256" }, { name: "deadline", type: "uint256" }], outputs: [{ name: "quote", type: "tuple", components: zonkCurveSellQuoteComponents }] },
+  { type: "event", name: "TokensBought", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "buyer", type: "address", indexed: true }, { name: "submittedGross", type: "uint256", indexed: false }, { name: "acceptedGross", type: "uint256", indexed: false }, { name: "netCurveInput", type: "uint256", indexed: false }, { name: "tokensOut", type: "uint256", indexed: false }, { name: "totalFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "communityFee", type: "uint256", indexed: false }, { name: "traderRewardsFee", type: "uint256", indexed: false }, { name: "refund", type: "uint256", indexed: false }] },
+  { type: "event", name: "TokensSold", anonymous: false, inputs: [{ name: "token", type: "address", indexed: true }, { name: "seller", type: "address", indexed: true }, { name: "tokensIn", type: "uint256", indexed: false }, { name: "grossCurveOutput", type: "uint256", indexed: false }, { name: "netSellerOutput", type: "uint256", indexed: false }, { name: "totalFee", type: "uint256", indexed: false }, { name: "creatorFee", type: "uint256", indexed: false }, { name: "protocolFee", type: "uint256", indexed: false }, { name: "communityFee", type: "uint256", indexed: false }, { name: "traderRewardsFee", type: "uint256", indexed: false }] },
 ] as const;
 
 export const erc20TradeAbi = [
@@ -120,8 +146,28 @@ export const erc20TradeAbi = [
   { type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
 ] as const;
 
-export type BuyQuote = { reserveIn: bigint; curveCost: bigint; protocolFee: bigint; creatorFee: bigint; acceptedGross?: bigint; netCurveInput?: bigint; tokensOut?: bigint };
-export type SellQuote = { reserveOut: bigint; curveValue: bigint; protocolFee: bigint; creatorFee: bigint; netSellerOutput?: bigint };
+export type BuyQuote = {
+  reserveIn: bigint;
+  curveCost: bigint;
+  protocolFee: bigint;
+  creatorFee: bigint;
+  acceptedGross?: bigint;
+  netCurveInput?: bigint;
+  tokensOut?: bigint;
+  totalFee?: bigint;
+  communityFee?: bigint;
+  traderRewardsFee?: bigint;
+};
+export type SellQuote = {
+  reserveOut: bigint;
+  curveValue: bigint;
+  protocolFee: bigint;
+  creatorFee: bigint;
+  netSellerOutput?: bigint;
+  totalFee?: bigint;
+  communityFee?: bigint;
+  traderRewardsFee?: bigint;
+};
 export type TradeReceipt = {
   side: "buy" | "sell";
   token: Address;
@@ -131,6 +177,9 @@ export type TradeReceipt = {
   curveValue: bigint;
   protocolFee: bigint;
   creatorFee: bigint;
+  totalFee?: bigint;
+  communityFee?: bigint;
+  traderRewardsFee?: bigint;
 };
 
 const BPS_SCALE = BigInt(10_000);
@@ -175,11 +224,35 @@ export function parseTradeReceipt(
       .filter((log) => getAddress(log.address) === getAddress(curve));
     if (logs.length !== 1) throw new Error(`confirmed receipt did not contain exactly one ${eventName} event`);
     const args = logs[0].args;
-    return { side: "buy", token: getAddress(args.token), trader: getAddress(args.buyer), tokenAmount: args.tokensOut, reserveAmount: args.acceptedGross, curveValue: args.netCurveInput, protocolFee: args.protocolFee, creatorFee: args.creatorFee };
+    return {
+      side: "buy",
+      token: getAddress(args.token),
+      trader: getAddress(args.buyer),
+      tokenAmount: args.tokensOut,
+      reserveAmount: args.acceptedGross,
+      curveValue: args.netCurveInput,
+      protocolFee: args.protocolFee,
+      creatorFee: args.creatorFee,
+      totalFee: args.totalFee,
+      communityFee: args.communityFee,
+      traderRewardsFee: args.traderRewardsFee,
+    };
   }
   const logs = parseEventLogs({ abi: zonkCurveAbi, eventName: "TokensSold", logs: receiptLogs, strict: true })
     .filter((log) => getAddress(log.address) === getAddress(curve));
   if (logs.length !== 1) throw new Error(`confirmed receipt did not contain exactly one ${eventName} event`);
   const args = logs[0].args;
-  return { side: "sell", token: getAddress(args.token), trader: getAddress(args.seller), tokenAmount: args.tokensIn, reserveAmount: args.grossCurveOutput, curveValue: args.netSellerOutput, protocolFee: args.protocolFee, creatorFee: args.creatorFee };
+  return {
+    side: "sell",
+    token: getAddress(args.token),
+    trader: getAddress(args.seller),
+    tokenAmount: args.tokensIn,
+    reserveAmount: args.grossCurveOutput,
+    curveValue: args.netSellerOutput,
+    protocolFee: args.protocolFee,
+    creatorFee: args.creatorFee,
+    totalFee: args.totalFee,
+    communityFee: args.communityFee,
+    traderRewardsFee: args.traderRewardsFee,
+  };
 }

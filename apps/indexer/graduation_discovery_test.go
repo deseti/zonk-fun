@@ -63,7 +63,7 @@ func TestSameBatchLaunchAndGraduationDiscovery(t *testing.T) {
 	settlement.Address, settlement.BlockNumber, settlement.BlockHash, settlement.TxHash, settlement.TxIndex, settlement.Index = manager, 11, b11.Hash(), graduationTx, 0, 4
 	graduated := eventLog(t, contractABI.Events, "Graduated", []common.Hash{common.BytesToHash(token.Bytes()), common.BytesToHash(manager.Bytes())}, big.NewInt(200), big.NewInt(3), big.NewInt(800))
 	graduated.Address, graduated.BlockNumber, graduated.BlockHash, graduated.TxHash, graduated.TxIndex, graduated.Index = curve, 11, b11.Hash(), graduationTx, 0, 6
-	buy := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{common.BytesToHash(token.Bytes()), common.BytesToHash(buyer.Bytes())}, big.NewInt(4), big.NewInt(3), big.NewInt(3), big.NewInt(800), big.NewInt(0), big.NewInt(0), big.NewInt(1))
+	buy := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{common.BytesToHash(token.Bytes()), common.BytesToHash(buyer.Bytes())}, big.NewInt(4), big.NewInt(3), big.NewInt(3), big.NewInt(800), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(1))
 	buy.Address, buy.BlockNumber, buy.BlockHash, buy.TxHash, buy.TxIndex, buy.Index = curve, 11, b11.Hash(), graduationTx, 0, 7
 
 	rpc := discoveryRPC{filter: func(query ethereum.FilterQuery) ([]types.Log, error) {

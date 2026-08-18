@@ -85,7 +85,7 @@ func TestV3TransferAnalyticsAndIdempotency(t *testing.T) {
 	mint.Address = common.BytesToAddress(token.Bytes())
 	move := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, buyer}, big.NewInt(100))
 	move.Address = common.BytesToAddress(token.Bytes())
-	buy := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(12), big.NewInt(12), big.NewInt(10), big.NewInt(10), big.NewInt(1), big.NewInt(1), big.NewInt(0))
+	buy := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(12), big.NewInt(12), big.NewInt(10), big.NewInt(10), big.NewInt(2), big.NewInt(1), big.NewInt(1), big.NewInt(0), big.NewInt(0), big.NewInt(0))
 	buy.Address = common.BytesToAddress(curve.Bytes())
 	logs := stamp(b, launch, mint, move, buy)
 	metadata := map[string]TokenMetadata{common.BytesToAddress(token.Bytes()).Hex(): {Name: "Analytics", Symbol: "AN", Decimals: 18}}
@@ -302,8 +302,8 @@ func TestV3HourlyOHLCUsesCanonicalTradeOrder(t *testing.T) {
 	launch := v3Launch(t, token, creator, curve)
 	mint := eventLog(t, contractABI.Events, "Transfer", []common.Hash{common.Hash{}, creator}, big.NewInt(1000))
 	mint.Address = common.BytesToAddress(token.Bytes())
-	first := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(12), big.NewInt(12), big.NewInt(10), big.NewInt(10), big.NewInt(1), big.NewInt(1), big.NewInt(0))
-	second := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(32), big.NewInt(32), big.NewInt(30), big.NewInt(20), big.NewInt(1), big.NewInt(1), big.NewInt(0))
+	first := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(12), big.NewInt(12), big.NewInt(10), big.NewInt(10), big.NewInt(2), big.NewInt(1), big.NewInt(1), big.NewInt(0), big.NewInt(0), big.NewInt(0))
+	second := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, buyer}, big.NewInt(32), big.NewInt(32), big.NewInt(30), big.NewInt(20), big.NewInt(2), big.NewInt(1), big.NewInt(1), big.NewInt(0), big.NewInt(0), big.NewInt(0))
 	first.Address, second.Address = common.BytesToAddress(curve.Bytes()), common.BytesToAddress(curve.Bytes())
 	metadata := map[string]TokenMetadata{common.BytesToAddress(token.Bytes()).Hex(): {Name: "OHLC", Symbol: "OHL", Decimals: 18}}
 	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3-ohlc", b, stamp(b, launch, mint, first, second), metadata); err != nil {
@@ -349,7 +349,7 @@ func TestV3AnalyticsReorgRemovesOrphanedState(t *testing.T) {
 	}
 	oldTransfer := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, oldBuyer}, big.NewInt(100))
 	oldTransfer.Address = common.BytesToAddress(token.Bytes())
-	oldTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, oldBuyer}, big.NewInt(10), big.NewInt(10), big.NewInt(8), big.NewInt(8), big.NewInt(1), big.NewInt(1), big.NewInt(0))
+	oldTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, oldBuyer}, big.NewInt(10), big.NewInt(10), big.NewInt(8), big.NewInt(8), big.NewInt(2), big.NewInt(1), big.NewInt(1), big.NewInt(0), big.NewInt(0), big.NewInt(0))
 	oldTrade.Address = common.BytesToAddress(curve.Bytes())
 	oldLogs := stamp(b2, oldTransfer, oldTrade)
 	if err := s.Apply(ctx, BaseSepoliaChainID, "v3-reorg", b2, oldLogs); err != nil {
@@ -360,7 +360,7 @@ func TestV3AnalyticsReorgRemovesOrphanedState(t *testing.T) {
 	}
 	newTransfer := eventLog(t, contractABI.Events, "Transfer", []common.Hash{creator, newBuyer}, big.NewInt(50))
 	newTransfer.Address = common.BytesToAddress(token.Bytes())
-	newTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, newBuyer}, big.NewInt(20), big.NewInt(20), big.NewInt(17), big.NewInt(17), big.NewInt(2), big.NewInt(1), big.NewInt(0))
+	newTrade := eventLog(t, v3TradeABI.Events, "TokensBought", []common.Hash{token, newBuyer}, big.NewInt(20), big.NewInt(20), big.NewInt(17), big.NewInt(17), big.NewInt(3), big.NewInt(1), big.NewInt(2), big.NewInt(0), big.NewInt(0), big.NewInt(0))
 	newTrade.Address = common.BytesToAddress(curve.Bytes())
 	if err := s.Apply(ctx, BaseSepoliaChainID, "v3-reorg", replacement, stamp(replacement, newTransfer, newTrade)); err != nil {
 		t.Fatal(err)

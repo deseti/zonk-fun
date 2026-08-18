@@ -11,6 +11,9 @@ import {PermanentLPCustodianDeployerV3} from "../../src/v3/PermanentLPCustodianD
 import {PermanentLPCustodianV3} from "../../src/v3/PermanentLPCustodianV3.sol";
 import {PermanentLPFeeVaultV3} from "../../src/v3/PermanentLPFeeVaultV3.sol";
 import {PermanentResidualEscrowV3} from "../../src/v3/PermanentResidualEscrowV3.sol";
+import {TokenCommunityVaultV3} from "../../src/v3/TokenCommunityVaultV3.sol";
+import {TraderRewardsDistributorV3} from "../../src/v3/TraderRewardsDistributorV3.sol";
+import {TraderRewardsVaultV3} from "../../src/v3/TraderRewardsVaultV3.sol";
 import {TokenDeployerV3} from "../../src/v3/TokenDeployerV3.sol";
 import {ZonkCurveV3} from "../../src/v3/ZonkCurveV3.sol";
 import {ZonkFactoryV3} from "../../src/v3/ZonkFactoryV3.sol";
@@ -253,11 +256,29 @@ contract BaseSepoliaUniswapV3ForkTest is Test {
         assertTrue(collected0 != 0 || collected1 != 0);
         assertEq(vault.totalLPFeesAccrued(settlement.token0), collected0);
         assertEq(vault.totalLPFeesAccrued(settlement.token1), collected1);
-        assertEq(vault.protocolLPFeesAccrued(TREASURY, settlement.token0), collected0 / 2);
-        assertEq(vault.creatorLPFeesAccrued(CREATOR, settlement.token0), collected0 - (collected0 / 2));
-        assertEq(vault.protocolLPFeesAccrued(TREASURY, settlement.token1), collected1 / 2);
-        assertEq(vault.creatorLPFeesAccrued(CREATOR, settlement.token1), collected1 - (collected1 / 2));
+        _assertDesignBLPFeeSplit(vault, settlement.token, settlement.token0, collected0);
+        _assertDesignBLPFeeSplit(vault, settlement.token, settlement.token1, collected1);
         assertEq(INonfungiblePositionManagerV3(NONFUNGIBLE_POSITION_MANAGER).ownerOf(thirdPartyId), THIRD_PARTY);
+    }
+
+    function _assertDesignBLPFeeSplit(
+        PermanentLPFeeVaultV3 vault,
+        address launchToken,
+        address asset,
+        uint256 collected
+    ) private view {
+        uint256 creatorShare = collected * 25 / 100;
+        uint256 communityShare = collected * 30 / 100;
+        uint256 traderRewardsShare = collected * 15 / 100;
+        uint256 protocolShare = collected - creatorShare - communityShare - traderRewardsShare;
+        assertEq(vault.creatorLPFeesAccrued(CREATOR, asset), creatorShare);
+        assertEq(vault.protocolLPFeesAccrued(TREASURY, asset), protocolShare);
+        assertEq(vault.communityLPFeesAccrued(launchToken, asset), communityShare);
+        assertEq(vault.traderRewardsLPFeesAccrued(launchToken, asset), traderRewardsShare);
+        assertEq(creatorShare + protocolShare + communityShare + traderRewardsShare, collected);
+        if (collected > 0) {
+            assertGe(protocolShare, collected * 30 / 100);
+        }
     }
 
     function testAtomicRegistrationCreatesAndRecordsCanonicalPool() public {
@@ -427,7 +448,14 @@ contract BaseSepoliaUniswapV3ForkTest is Test {
         factory = new ZonkFactoryV3(address(fees), address(manager));
         fees.setFactoryOnce(address(factory));
         manager.setFactoryOnce(address(factory));
-        vault = new PermanentLPFeeVaultV3(address(manager), address(fees));
+        TokenCommunityVaultV3 community = new TokenCommunityVaultV3(address(this), TREASURY, address(fees));
+        TraderRewardsVaultV3 rewards = new TraderRewardsVaultV3(address(this), address(fees));
+        TraderRewardsDistributorV3 distributor = new TraderRewardsDistributorV3(address(this), address(rewards));
+        rewards.setDistributorOnce(address(distributor));
+        fees.bindEcosystemVaultsOnce(address(community), address(rewards));
+        vault = new PermanentLPFeeVaultV3(address(manager), address(fees), address(community), address(rewards));
+        community.setPermanentLPFeeVaultOnce(address(vault));
+        rewards.setPermanentLPFeeVaultOnce(address(vault));
         deployer = new PermanentLPCustodianDeployerV3(address(manager), address(vault), NONFUNGIBLE_POSITION_MANAGER);
         manager.bindDependenciesOnce(address(vault), address(deployer), NONFUNGIBLE_POSITION_MANAGER);
     }

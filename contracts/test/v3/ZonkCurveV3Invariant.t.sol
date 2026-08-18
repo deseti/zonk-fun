@@ -6,16 +6,21 @@ import {FeeManagerV3} from "../../src/v3/FeeManagerV3.sol";
 import {ZonkCurveV3} from "../../src/v3/ZonkCurveV3.sol";
 import {ZonkFactoryV3} from "../../src/v3/ZonkFactoryV3.sol";
 import {ZonkTokenV3} from "../../src/v3/ZonkTokenV3.sol";
+import {TokenCommunityVaultV3} from "../../src/v3/TokenCommunityVaultV3.sol";
+import {TraderRewardsDistributorV3} from "../../src/v3/TraderRewardsDistributorV3.sol";
+import {TraderRewardsVaultV3} from "../../src/v3/TraderRewardsVaultV3.sol";
 import {MockGraduationManagerV3} from "./mocks/MockGraduationManagerV3.sol";
 import {MockUniswapV3FactoryV3, MockWETHV3} from "./mocks/MockUniswapV3.sol";
 
 contract CurveHandlerV3 {
     ZonkCurveV3 public immutable curve;
     ZonkTokenV3 public immutable token;
+    FeeManagerV3 public immutable feeManager;
 
-    constructor(ZonkCurveV3 curve_, ZonkTokenV3 token_) payable {
+    constructor(ZonkCurveV3 curve_, ZonkTokenV3 token_, FeeManagerV3 feeManager_) payable {
         curve = curve_;
         token = token_;
+        feeManager = feeManager_;
         token_.approve(address(curve_), type(uint256).max);
     }
 
@@ -34,6 +39,14 @@ contract CurveHandlerV3 {
         try curve.sell(amount, 0, block.timestamp) {} catch {}
     }
 
+    function fundCommunity() external {
+        try feeManager.fundCommunityVault(address(token)) {} catch {}
+    }
+
+    function fundRewards() external {
+        try feeManager.fundTraderRewardsVault(address(token)) {} catch {}
+    }
+
     receive() external payable {}
 }
 
@@ -48,6 +61,8 @@ contract ZonkCurveV3InvariantTest is Test {
     ZonkTokenV3 private token;
     ZonkCurveV3 private curve;
     CurveHandlerV3 private handler;
+    TokenCommunityVaultV3 private communityVault;
+    TraderRewardsVaultV3 private rewardsVault;
 
     function setUp() public {
         feeManager = new FeeManagerV3(address(this), makeAddr("invariantTreasury"));
@@ -57,11 +72,17 @@ contract ZonkCurveV3InvariantTest is Test {
         factory = new ZonkFactoryV3(address(feeManager), address(graduationManager));
         feeManager.setFactoryOnce(address(factory));
         graduationManager.setFactoryOnce(address(factory));
+        communityVault =
+            new TokenCommunityVaultV3(address(this), makeAddr("invariantCommunityTreasury"), address(feeManager));
+        rewardsVault = new TraderRewardsVaultV3(address(this), address(feeManager));
+        TraderRewardsDistributorV3 distributor = new TraderRewardsDistributorV3(address(this), address(rewardsVault));
+        rewardsVault.setDistributorOnce(address(distributor));
+        feeManager.bindEcosystemVaultsOnce(address(communityVault), address(rewardsVault));
         (address tokenAddress, address curveAddress) =
             factory.createToken("Invariant V3", "IV3", keccak256("invariant-salt"));
         token = ZonkTokenV3(tokenAddress);
         curve = ZonkCurveV3(payable(curveAddress));
-        handler = new CurveHandlerV3{value: 100 ether}(curve, token);
+        handler = new CurveHandlerV3{value: 100 ether}(curve, token, feeManager);
         targetContract(address(handler));
     }
 
@@ -85,7 +106,14 @@ contract ZonkCurveV3InvariantTest is Test {
         assertLe(curve.activeEthReserve(), 3 ether);
         assertEq(address(curve).balance, curve.activeEthReserve());
         assertEq(curve.reserveCoordinate(), curve.activeEthReserve() + curve.terminalGraduationReserve());
-        assertEq(address(feeManager).balance, feeManager.protocolFeesAccrued() + feeManager.totalCreatorFeesAccrued());
+        assertEq(address(feeManager).balance, feeManager.totalLiabilities());
+        assertEq(address(communityVault).balance, communityVault.totalAccrued(address(0)));
+        assertEq(address(rewardsVault).balance, rewardsVault.totalAccrued(address(0)));
+        assertEq(
+            feeManager.totalLiabilities(),
+            feeManager.protocolFeesAccrued() + feeManager.totalCreatorFeesAccrued() + feeManager.communityFeesAccrued()
+                + feeManager.traderRewardsFeesAccrued()
+        );
         assertGe(curve.virtualTokenReserve() * curve.virtualEthReserve(), curve.K());
     }
 

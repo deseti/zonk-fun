@@ -18,6 +18,10 @@ contract PermanentLPFeeVaultV3Test is ZonkV3TestBase {
     }
 
     function testVaultBindingIsAuthorizedValidatedAndConsumed() public {
+        assertEq(lpFeeVault.protocolVersionHash(), keccak256("endpoint-cp-v3-custody-2b1a"));
+        assertEq(lpFeeVault.feePolicyHash(), keccak256("zonk-fee-design-b-v3"));
+        assertEq(lpFeeVault.communityVault(), address(communityVault));
+        assertEq(lpFeeVault.traderRewardsVault(), address(rewardsVault));
         vm.expectRevert(IPermanentLPFeeVaultV3.UnauthorizedBootstrap.selector);
         lpFeeVault.setPermanentLPCustodianDeployerOnce(address(deployer));
         vm.prank(address(graduationManager));

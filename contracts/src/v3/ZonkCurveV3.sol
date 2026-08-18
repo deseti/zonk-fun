@@ -72,8 +72,11 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
         quote.submittedGross = grossInput;
         quote.acceptedGross = submittedNet >= netNeeded ? grossRequiredForNet(netNeeded) : grossInput;
         FeeSplit memory fees = splitFee(quote.acceptedGross);
-        quote.protocolFee = fees.protocolFee;
+        quote.totalFee = fees.totalFee;
         quote.creatorFee = fees.creatorFee;
+        quote.protocolFee = fees.protocolFee;
+        quote.communityFee = fees.communityFee;
+        quote.traderRewardsFee = fees.traderRewardsFee;
         quote.netCurveInput = quote.acceptedGross - fees.totalFee;
         quote.refund = grossInput - quote.acceptedGross;
 
@@ -102,8 +105,11 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
         if (quote.grossCurveOutput == 0) revert DustTrade();
         if (quote.grossCurveOutput > activeEthReserve) revert InsufficientReserve();
         FeeSplit memory fees = splitFee(quote.grossCurveOutput);
-        quote.protocolFee = fees.protocolFee;
+        quote.totalFee = fees.totalFee;
         quote.creatorFee = fees.creatorFee;
+        quote.protocolFee = fees.protocolFee;
+        quote.communityFee = fees.communityFee;
+        quote.traderRewardsFee = fees.traderRewardsFee;
         quote.netSellerOutput = quote.grossCurveOutput - fees.totalFee;
     }
 
@@ -126,8 +132,8 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
         if (quote.reachesGraduation) graduated = true;
 
         IERC20(token).safeTransfer(msg.sender, quote.tokensOut);
-        feeManager.depositFees{value: quote.protocolFee + quote.creatorFee}(
-            token, quote.protocolFee, quote.creatorFee, true
+        feeManager.depositFees{value: quote.totalFee}(
+            token, quote.totalFee, quote.creatorFee, quote.protocolFee, quote.communityFee, quote.traderRewardsFee, true
         );
 
         if (quote.reachesGraduation) _graduate();
@@ -140,8 +146,11 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
             quote.acceptedGross,
             quote.netCurveInput,
             quote.tokensOut,
-            quote.protocolFee,
+            quote.totalFee,
             quote.creatorFee,
+            quote.protocolFee,
+            quote.communityFee,
+            quote.traderRewardsFee,
             quote.refund
         );
     }
@@ -159,8 +168,14 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
         soldSupply -= tokensIn;
         activeEthReserve -= quote.grossCurveOutput;
         IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
-        feeManager.depositFees{value: quote.protocolFee + quote.creatorFee}(
-            token, quote.protocolFee, quote.creatorFee, false
+        feeManager.depositFees{value: quote.totalFee}(
+            token,
+            quote.totalFee,
+            quote.creatorFee,
+            quote.protocolFee,
+            quote.communityFee,
+            quote.traderRewardsFee,
+            false
         );
         _sendNative(msg.sender, quote.netSellerOutput);
 
@@ -170,8 +185,11 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
             tokensIn,
             quote.grossCurveOutput,
             quote.netSellerOutput,
+            quote.totalFee,
+            quote.creatorFee,
             quote.protocolFee,
-            quote.creatorFee
+            quote.communityFee,
+            quote.traderRewardsFee
         );
     }
 
@@ -212,10 +230,22 @@ contract ZonkCurveV3 is IZonkCurveV3, ReentrancyGuard {
         if (gross - fees.totalFee != netAmount) revert GraduationAccountingMismatch();
     }
 
+    function feePolicyHash() external pure override returns (bytes32) {
+        return EndpointConstantsV3.FEE_POLICY_HASH;
+    }
+
     function splitFee(uint256 grossAmount) public pure override returns (FeeSplit memory fees) {
         fees.totalFee = Math.mulDiv(grossAmount, TOTAL_FEE_BPS, FEE_DENOMINATOR);
-        fees.protocolFee = fees.totalFee / 2;
-        fees.creatorFee = fees.totalFee - fees.protocolFee;
+        fees.creatorFee = Math.mulDiv(
+            fees.totalFee, EndpointConstantsV3.CREATOR_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR
+        );
+        fees.communityFee = Math.mulDiv(
+            fees.totalFee, EndpointConstantsV3.COMMUNITY_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR
+        );
+        fees.traderRewardsFee = Math.mulDiv(
+            fees.totalFee, EndpointConstantsV3.TRADER_REWARDS_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR
+        );
+        fees.protocolFee = fees.totalFee - fees.creatorFee - fees.communityFee - fees.traderRewardsFee;
     }
 
     receive() external payable {

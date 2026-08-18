@@ -95,6 +95,9 @@ contract ZonkV3SecurityTest is ZonkV3TestBase {
         assertEq(address(graduationManager).balance, 0);
         assertEq(feeManager.protocolFeesAccrued(), 0);
         assertEq(feeManager.creatorFeesAccrued(address(token)), 0);
+        assertEq(feeManager.communityFeesAccrued(), 0);
+        assertEq(feeManager.traderRewardsFeesAccrued(), 0);
+        assertEq(feeManager.totalLiabilities(), 0);
     }
 
     function testGraduationCallbackCannotReenterBuy() public {
@@ -160,6 +163,7 @@ contract ZonkV3SecurityTest is ZonkV3TestBase {
         assertFalse(curve.graduated());
         assertEq(graduationManager.calls(), 0);
         assertEq(feeManager.protocolFeesAccrued(), 0);
+        assertEq(feeManager.totalLiabilities(), 0);
     }
 }
 

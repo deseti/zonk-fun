@@ -32,6 +32,7 @@ contract ZonkCurveV3Test is ZonkV3TestBase {
 
     function testCanonicalConstantsAndInitialEndpoint() public view {
         assertEq(curve.PROTOCOL_VERSION(), "endpoint-cp-v3");
+        assertEq(curve.feePolicyHash(), keccak256("zonk-fee-design-b-v3"));
         assertEq(curve.TOTAL_SUPPLY(), 1_000_000_000 ether);
         assertEq(curve.CURVE_ALLOCATION(), 800_000_000 ether);
         assertEq(curve.LP_ALLOCATION(), 200_000_000 ether);
@@ -62,14 +63,22 @@ contract ZonkCurveV3Test is ZonkV3TestBase {
 
     function testAcceptedSimulatorBuyVector() public {
         IZonkCurveV3.BuyQuote memory quote = curve.quoteBuy(0.1 ether);
-        assertEq(quote.protocolFee, 500_000_000_000_000);
-        assertEq(quote.creatorFee, 500_000_000_000_000);
+        assertEq(quote.totalFee, 1_000_000_000_000_000);
+        assertEq(quote.creatorFee, 350_000_000_000_000);
+        assertEq(quote.protocolFee, 300_000_000_000_000);
+        assertEq(quote.communityFee, 200_000_000_000_000);
+        assertEq(quote.traderRewardsFee, 150_000_000_000_000);
         assertEq(quote.netCurveInput, 99_000_000_000_000_000);
         assertEq(quote.tokensOut, 96_087_352_138_307_552_320_291_173);
 
         vm.prank(buyer);
         IZonkCurveV3.BuyQuote memory executed = curve.buy{value: 0.1 ether}(quote.tokensOut, block.timestamp);
         assertEq(keccak256(abi.encode(executed)), keccak256(abi.encode(quote)));
+        assertEq(feeManager.totalLiabilities(), quote.totalFee);
+        assertEq(feeManager.creatorFeesAccrued(address(token)), quote.creatorFee);
+        assertEq(feeManager.protocolFeesAccrued(), quote.protocolFee);
+        assertEq(feeManager.communityFeesAccrued(), quote.communityFee);
+        assertEq(feeManager.traderRewardsFeesAccrued(), quote.traderRewardsFee);
         assertEq(curve.activeEthReserve(), 99_000_000_000_000_000);
         assertEq(curve.spotPrice(), 1_132_313_438);
     }
@@ -153,20 +162,52 @@ contract ZonkCurveV3Test is ZonkV3TestBase {
         assertEq(quote.acceptedGross, GRADUATION_GROSS);
         assertEq(quote.refund, 1);
         assertEq(buyerBefore - buyer.balance, GRADUATION_GROSS);
-        assertEq(feeManager.protocolFeesAccrued(), 15_151_515_151_515_151);
-        assertEq(feeManager.creatorFeesAccrued(address(token)), 15_151_515_151_515_152);
+        assertEq(feeManager.totalLiabilities(), quote.totalFee);
+        assertEq(feeManager.creatorFeesAccrued(address(token)), quote.creatorFee);
+        assertEq(feeManager.protocolFeesAccrued(), quote.protocolFee);
+        assertEq(feeManager.communityFeesAccrued(), quote.communityFee);
+        assertEq(feeManager.traderRewardsFeesAccrued(), quote.traderRewardsFee);
     }
 
-    function testOddFeeWeiAlwaysBelongsToCreator() public {
+    function testTinyFeeWeiAlwaysBelongsToProtocolRemainderSink() public {
         IZonkCurveV3.FeeSplit memory split = curve.splitFee(100);
         assertEq(split.totalFee, 1);
-        assertEq(split.protocolFee, 0);
-        assertEq(split.creatorFee, 1);
+        assertEq(split.creatorFee, 0);
+        assertEq(split.protocolFee, 1);
+        assertEq(split.communityFee, 0);
+        assertEq(split.traderRewardsFee, 0);
         vm.prank(buyer);
         curve.buy{value: 100}(0, block.timestamp);
-        assertEq(feeManager.protocolFeesAccrued(), 0);
-        assertEq(feeManager.creatorFeesAccrued(address(token)), 1);
+        assertEq(feeManager.protocolFeesAccrued(), 1);
+        assertEq(feeManager.creatorFeesAccrued(address(token)), 0);
+        assertEq(feeManager.totalLiabilities(), 1);
         assertEq(curve.activeEthReserve(), 99);
+    }
+
+    function testFeeDesignBExactAllocationAndProtocolRemainder() public view {
+        IZonkCurveV3.FeeSplit memory exactSplit = curve.splitFee(10_000);
+        assertEq(exactSplit.totalFee, 100);
+        assertEq(exactSplit.creatorFee, 35);
+        assertEq(exactSplit.protocolFee, 30);
+        assertEq(exactSplit.communityFee, 20);
+        assertEq(exactSplit.traderRewardsFee, 15);
+
+        IZonkCurveV3.FeeSplit memory roundedSplit = curve.splitFee(10_100);
+        assertEq(roundedSplit.totalFee, 101);
+        assertEq(roundedSplit.creatorFee, 35);
+        assertEq(roundedSplit.communityFee, 20);
+        assertEq(roundedSplit.traderRewardsFee, 15);
+        assertEq(roundedSplit.protocolFee, 31);
+    }
+
+    function testFuzzFeeSplitIsOnePercentAndFullyAllocated(uint256 grossAmount) public view {
+        grossAmount = bound(grossAmount, 0, type(uint256).max / 100);
+        IZonkCurveV3.FeeSplit memory split = curve.splitFee(grossAmount);
+        assertEq(split.totalFee, grossAmount / 100);
+        assertEq(split.creatorFee, split.totalFee * 35 / 100);
+        assertEq(split.communityFee, split.totalFee * 20 / 100);
+        assertEq(split.traderRewardsFee, split.totalFee * 15 / 100);
+        assertEq(split.creatorFee + split.protocolFee + split.communityFee + split.traderRewardsFee, split.totalFee);
     }
 
     function testBuyAndSellQuoteExecutionParityAndRoundTripAccounting() public {
@@ -182,6 +223,11 @@ contract ZonkCurveV3Test is ZonkV3TestBase {
         IZonkCurveV3.SellQuote memory sellExecution =
             curve.sell(buyQuote.tokensOut, sellQuote.netSellerOutput, block.timestamp);
         assertEq(keccak256(abi.encode(sellQuote)), keccak256(abi.encode(sellExecution)));
+        assertEq(feeManager.totalLiabilities(), buyQuote.totalFee + sellQuote.totalFee);
+        assertEq(feeManager.creatorFeesAccrued(address(token)), buyQuote.creatorFee + sellQuote.creatorFee);
+        assertEq(feeManager.protocolFeesAccrued(), buyQuote.protocolFee + sellQuote.protocolFee);
+        assertEq(feeManager.communityFeesAccrued(), buyQuote.communityFee + sellQuote.communityFee);
+        assertEq(feeManager.traderRewardsFeesAccrued(), buyQuote.traderRewardsFee + sellQuote.traderRewardsFee);
         assertEq(sellQuote.grossCurveOutput, buyQuote.netCurveInput);
         assertEq(curve.activeEthReserve(), 0);
         assertEq(curve.soldSupply(), 0);
@@ -223,6 +269,59 @@ contract ZonkCurveV3Test is ZonkV3TestBase {
         vm.expectRevert(IZonkCurveV3.TradingClosed.selector);
         curve.quoteSell(1);
         assertEq(graduationManager.calls(), 1);
+    }
+
+    function testCompetingFinalGraduationBuysPreserveExactReserve() public {
+        address rival = makeAddr("rivalBuyer");
+        vm.deal(rival, 10 ether);
+        IZonkCurveV3.BuyQuote memory firstQuote = curve.quoteBuy(GRADUATION_GROSS);
+        IZonkCurveV3.BuyQuote memory staleSecondQuote = firstQuote;
+
+        vm.prank(buyer);
+        curve.buy{value: firstQuote.acceptedGross}(firstQuote.tokensOut, block.timestamp);
+        assertTrue(curve.graduated());
+        assertEq(curve.activeEthReserve(), 0);
+        assertEq(curve.terminalGraduationReserve(), 3 ether);
+        assertEq(curve.graduationEthForwarded(), 3 ether);
+        assertEq(address(graduationManager).balance, 3 ether);
+        assertEq(graduationManager.calls(), 1);
+
+        vm.prank(rival);
+        vm.expectRevert(IZonkCurveV3.TradingClosed.selector);
+        curve.buy{value: staleSecondQuote.acceptedGross}(staleSecondQuote.tokensOut, block.timestamp);
+        assertEq(curve.terminalGraduationReserve(), 3 ether);
+        assertEq(curve.graduationEthForwarded(), 3 ether);
+        assertEq(address(graduationManager).balance, 3 ether);
+        assertEq(graduationManager.calls(), 1);
+        assertEq(token.balanceOf(rival), 0);
+    }
+
+    function testStrictMinOutRevertsAfterAdversarialStateMovement() public {
+        IZonkCurveV3.BuyQuote memory victimQuote = curve.quoteBuy(0.1 ether);
+        address attacker = makeAddr("mevAttacker");
+        vm.deal(attacker, 10 ether);
+        _buy(attacker, curve, 0.5 ether);
+
+        vm.prank(buyer);
+        vm.expectRevert(IZonkCurveV3.SlippageExceeded.selector);
+        curve.buy{value: 0.1 ether}(victimQuote.tokensOut, block.timestamp);
+        assertEq(token.balanceOf(buyer), 0);
+    }
+
+    function testLooseMinOutMayExecuteAtWorsePrice() public {
+        IZonkCurveV3.BuyQuote memory original = curve.quoteBuy(0.1 ether);
+        address attacker = makeAddr("looseSlippageAttacker");
+        vm.deal(attacker, 10 ether);
+        _buy(attacker, curve, 0.5 ether);
+
+        IZonkCurveV3.BuyQuote memory moved = curve.quoteBuy(0.1 ether);
+        assertLt(moved.tokensOut, original.tokensOut);
+
+        vm.prank(buyer);
+        IZonkCurveV3.BuyQuote memory executed = curve.buy{value: 0.1 ether}(0, block.timestamp);
+        assertEq(executed.tokensOut, moved.tokensOut);
+        assertLt(executed.tokensOut, original.tokensOut);
+        assertEq(token.balanceOf(buyer), executed.tokensOut);
     }
 
     function testDeadlineSlippageZeroAndDustProtection() public {

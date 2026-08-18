@@ -17,7 +17,14 @@ library EndpointConstantsV3 {
 
     uint256 internal constant FEE_DENOMINATOR = 10_000;
     uint256 internal constant TOTAL_FEE_BPS = 100;
-    uint256 internal constant LP_FEE_SPLIT_DENOMINATOR = 2;
+    uint256 internal constant FEE_SPLIT_DENOMINATOR = 100;
+    uint256 internal constant CREATOR_FEE_PERCENT = 35;
+    uint256 internal constant COMMUNITY_FEE_PERCENT = 20;
+    uint256 internal constant TRADER_REWARDS_FEE_PERCENT = 15;
+    bytes32 internal constant FEE_POLICY_HASH = keccak256("zonk-fee-design-b-v3");
+    uint256 internal constant LP_CREATOR_FEE_PERCENT = 25;
+    uint256 internal constant LP_COMMUNITY_FEE_PERCENT = 30;
+    uint256 internal constant LP_TRADER_REWARDS_FEE_PERCENT = 15;
     uint256 internal constant NET_GROSS_ADJUSTMENT_DENOMINATOR = (FEE_DENOMINATOR - TOTAL_FEE_BPS) / TOTAL_FEE_BPS;
     uint256 internal constant INITIAL_PRICE = 937_500_000;
     uint256 internal constant TERMINAL_PRICE = 15_000_000_000;

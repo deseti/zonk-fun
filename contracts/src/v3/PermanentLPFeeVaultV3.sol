@@ -4,12 +4,15 @@ pragma solidity ^0.8.20;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IFeeManagerV3} from "./interfaces/IFeeManagerV3.sol";
 import {IGraduationManagerV3} from "./interfaces/IGraduationManagerV3.sol";
 import {INonfungiblePositionManagerV3} from "./interfaces/INonfungiblePositionManagerV3.sol";
 import {IPermanentLPCustodianV3} from "./interfaces/IPermanentLPCustodianV3.sol";
 import {IPermanentLPCustodianDeployerV3} from "./interfaces/IPermanentLPCustodianDeployerV3.sol";
 import {IPermanentLPFeeVaultV3} from "./interfaces/IPermanentLPFeeVaultV3.sol";
+import {ITokenCommunityVaultV3} from "./interfaces/ITokenCommunityVaultV3.sol";
+import {ITraderRewardsVaultV3} from "./interfaces/ITraderRewardsVaultV3.sol";
 import {IZonkFactoryV3} from "./interfaces/IZonkFactoryV3.sol";
 import {CanonicalPositionV3} from "./libraries/CanonicalPositionV3.sol";
 import {EndpointConstantsV3} from "./libraries/EndpointConstantsV3.sol";
@@ -24,18 +27,26 @@ contract PermanentLPFeeVaultV3 is IPermanentLPFeeVaultV3, ReentrancyGuard {
     address public immutable override feeManager;
     address public immutable override graduationManager;
     address public immutable override weth;
+    address public immutable override communityVault;
+    address public immutable override traderRewardsVault;
     address public override permanentLPCustodianDeployer;
     address public override custodianDeployerBootstrapAuthority;
 
     mapping(address recipient => mapping(address asset => uint256 amount)) public override protocolLPFeesAccrued;
     mapping(address recipient => mapping(address asset => uint256 amount)) public override creatorLPFeesAccrued;
+    mapping(address launchToken => mapping(address asset => uint256 amount)) public override communityLPFeesAccrued;
+    mapping(address launchToken => mapping(address asset => uint256 amount)) public override traderRewardsLPFeesAccrued;
     mapping(address asset => uint256 amount) public override totalLPFeesAccrued;
 
-    constructor(address graduationManager_, address feeManager_) {
+    constructor(address graduationManager_, address feeManager_, address communityVault_, address traderRewardsVault_) {
         if (
             graduationManager_ == address(0) || graduationManager_.code.length == 0 || feeManager_ == address(0)
                 || feeManager_.code.length == 0
         ) revert InvalidCustodianDeployer();
+        if (
+            communityVault_ == address(0) || communityVault_.code.length == 0 || traderRewardsVault_ == address(0)
+                || traderRewardsVault_.code.length == 0
+        ) revert InvalidEcosystemVault();
         IGraduationManagerV3 manager = IGraduationManagerV3(graduationManager_);
         IFeeManagerV3 fees = IFeeManagerV3(feeManager_);
         address factory_ = manager.factory();
@@ -48,15 +59,31 @@ contract PermanentLPFeeVaultV3 is IPermanentLPFeeVaultV3, ReentrancyGuard {
         ) {
             revert InvalidCustodianDeployer();
         }
+        if (
+            fees.feePolicyHash() != EndpointConstantsV3.FEE_POLICY_HASH || fees.communityVault() != communityVault_
+                || fees.traderRewardsVault() != traderRewardsVault_
+                || ITokenCommunityVaultV3(communityVault_).feeManager() != feeManager_
+                || ITraderRewardsVaultV3(traderRewardsVault_).feeManager() != feeManager_
+                || ITokenCommunityVaultV3(communityVault_).protocolVersionHash() != keccak256("endpoint-cp-v3")
+                || ITraderRewardsVaultV3(traderRewardsVault_).protocolVersionHash() != keccak256("endpoint-cp-v3")
+                || ITokenCommunityVaultV3(communityVault_).feePolicyHash() != EndpointConstantsV3.FEE_POLICY_HASH
+                || ITraderRewardsVaultV3(traderRewardsVault_).feePolicyHash() != EndpointConstantsV3.FEE_POLICY_HASH
+        ) revert InvalidEcosystemVault();
         factory = factory_;
         feeManager = feeManager_;
         graduationManager = graduationManager_;
         weth = weth_;
+        communityVault = communityVault_;
+        traderRewardsVault = traderRewardsVault_;
         custodianDeployerBootstrapAuthority = graduationManager_;
     }
 
     function protocolVersionHash() external pure override returns (bytes32) {
         return PROTOCOL_VERSION_HASH;
+    }
+
+    function feePolicyHash() external pure override returns (bytes32) {
+        return EndpointConstantsV3.FEE_POLICY_HASH;
     }
 
     function setPermanentLPCustodianDeployerOnce(address deployer) external override {
@@ -142,6 +169,42 @@ contract PermanentLPFeeVaultV3 is IPermanentLPFeeVaultV3, ReentrancyGuard {
         IERC20(asset).safeTransfer(msg.sender, total);
     }
 
+    function fundCommunityVault(address launchToken, address asset)
+        external
+        override
+        nonReentrant
+        returns (uint256 amount)
+    {
+        if (asset == address(0)) revert InvalidLPFeeAsset();
+        amount = communityLPFeesAccrued[launchToken][asset];
+        if (amount == 0) revert NothingToClaimLPFees();
+        communityLPFeesAccrued[launchToken][asset] = 0;
+        totalLPFeesAccrued[asset] -= amount;
+        uint256 balanceBefore = IERC20(asset).balanceOf(communityVault);
+        IERC20(asset).safeTransfer(communityVault, amount);
+        if (IERC20(asset).balanceOf(communityVault) != balanceBefore + amount) revert InvalidEcosystemVault();
+        ITokenCommunityVaultV3(communityVault).recordERC20Funding(launchToken, asset, amount);
+        emit CommunityLPFeesForwarded(launchToken, asset, communityVault, amount, msg.sender);
+    }
+
+    function fundTraderRewardsVault(address launchToken, address asset)
+        external
+        override
+        nonReentrant
+        returns (uint256 amount)
+    {
+        if (asset == address(0)) revert InvalidLPFeeAsset();
+        amount = traderRewardsLPFeesAccrued[launchToken][asset];
+        if (amount == 0) revert NothingToClaimLPFees();
+        traderRewardsLPFeesAccrued[launchToken][asset] = 0;
+        totalLPFeesAccrued[asset] -= amount;
+        uint256 balanceBefore = IERC20(asset).balanceOf(traderRewardsVault);
+        IERC20(asset).safeTransfer(traderRewardsVault, amount);
+        if (IERC20(asset).balanceOf(traderRewardsVault) != balanceBefore + amount) revert InvalidEcosystemVault();
+        ITraderRewardsVaultV3(traderRewardsVault).recordERC20Funding(launchToken, asset, amount);
+        emit TraderRewardsLPFeesForwarded(launchToken, asset, traderRewardsVault, amount, msg.sender);
+    }
+
     function _requireBacking(address asset, uint256 amount) private view {
         uint256 required = totalLPFeesAccrued[asset] + amount;
         uint256 available = IERC20(asset).balanceOf(address(this));
@@ -157,13 +220,30 @@ contract PermanentLPFeeVaultV3 is IPermanentLPFeeVaultV3, ReentrancyGuard {
         address creatorRecipient
     ) private {
         if (amount == 0) return;
-        uint256 protocolShare = amount / EndpointConstantsV3.LP_FEE_SPLIT_DENOMINATOR;
-        uint256 creatorShare = amount - protocolShare;
+        uint256 creatorShare =
+            Math.mulDiv(amount, EndpointConstantsV3.LP_CREATOR_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR);
+        uint256 communityShare = Math.mulDiv(
+            amount, EndpointConstantsV3.LP_COMMUNITY_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR
+        );
+        uint256 traderRewardsShare = Math.mulDiv(
+            amount, EndpointConstantsV3.LP_TRADER_REWARDS_FEE_PERCENT, EndpointConstantsV3.FEE_SPLIT_DENOMINATOR
+        );
+        uint256 protocolShare = amount - creatorShare - communityShare - traderRewardsShare;
         protocolLPFeesAccrued[protocolRecipient][asset] += protocolShare;
         creatorLPFeesAccrued[creatorRecipient][asset] += creatorShare;
+        communityLPFeesAccrued[launchToken][asset] += communityShare;
+        traderRewardsLPFeesAccrued[launchToken][asset] += traderRewardsShare;
         totalLPFeesAccrued[asset] += amount;
         emit PermanentLPFeesAccrued(
-            launchToken, custodian, asset, protocolRecipient, creatorRecipient, protocolShare, creatorShare
+            launchToken,
+            custodian,
+            asset,
+            protocolRecipient,
+            creatorRecipient,
+            creatorShare,
+            protocolShare,
+            communityShare,
+            traderRewardsShare
         );
     }
 }

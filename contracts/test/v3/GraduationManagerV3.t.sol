@@ -10,6 +10,9 @@ import {PermanentLPFeeVaultV3} from "../../src/v3/PermanentLPFeeVaultV3.sol";
 import {PermanentResidualEscrowV3} from "../../src/v3/PermanentResidualEscrowV3.sol";
 import {PermanentLPCustodianDeployerV3} from "../../src/v3/PermanentLPCustodianDeployerV3.sol";
 import {PermanentLPCustodianV3} from "../../src/v3/PermanentLPCustodianV3.sol";
+import {TokenCommunityVaultV3} from "../../src/v3/TokenCommunityVaultV3.sol";
+import {TraderRewardsDistributorV3} from "../../src/v3/TraderRewardsDistributorV3.sol";
+import {TraderRewardsVaultV3} from "../../src/v3/TraderRewardsVaultV3.sol";
 import {ZonkFactoryV3} from "../../src/v3/ZonkFactoryV3.sol";
 import {ZonkCurveV3} from "../../src/v3/ZonkCurveV3.sol";
 import {IGraduationManagerV3} from "../../src/v3/interfaces/IGraduationManagerV3.sol";
@@ -44,6 +47,8 @@ contract GraduationManagerV3Test is Test {
     MockUniswapV3FactoryV3 internal uniswapFactory;
     MockNonfungiblePositionManagerV3 internal npm;
     PermanentLPFeeVaultV3 internal vault;
+    TokenCommunityVaultV3 internal communityVault;
+    TraderRewardsVaultV3 internal rewardsVault;
     PermanentLPCustodianDeployerV3 internal deployer;
 
     function setUp() public {
@@ -54,7 +59,11 @@ contract GraduationManagerV3Test is Test {
         factory = new ZonkFactoryV3(address(fees), address(manager));
         fees.setFactoryOnce(address(factory));
         manager.setFactoryOnce(address(factory));
-        vault = new PermanentLPFeeVaultV3(address(manager), address(fees));
+        (communityVault, rewardsVault) = _bindEcosystemVaults(fees);
+        vault =
+            new PermanentLPFeeVaultV3(address(manager), address(fees), address(communityVault), address(rewardsVault));
+        communityVault.setPermanentLPFeeVaultOnce(address(vault));
+        rewardsVault.setPermanentLPFeeVaultOnce(address(vault));
         npm = new MockNonfungiblePositionManagerV3(address(uniswapFactory), address(weth));
         deployer = new PermanentLPCustodianDeployerV3(address(manager), address(vault), address(npm));
         manager.bindDependenciesOnce(address(vault), address(deployer), address(npm));
@@ -199,7 +208,10 @@ contract GraduationManagerV3Test is Test {
         fresh.setFactoryOnce(address(freshFactory));
         vm.expectRevert(GraduationManagerV3.InvalidDependency.selector);
         fresh.bindDependenciesOnce(address(1), address(2), address(3));
-        PermanentLPFeeVaultV3 freshVault = new PermanentLPFeeVaultV3(address(fresh), address(freshFees));
+        (TokenCommunityVaultV3 freshCommunity, TraderRewardsVaultV3 freshRewards) = _bindEcosystemVaults(freshFees);
+        PermanentLPFeeVaultV3 freshVault = new PermanentLPFeeVaultV3(
+            address(fresh), address(freshFees), address(freshCommunity), address(freshRewards)
+        );
         MockNonfungiblePositionManagerV3 wrongFactory =
             new MockNonfungiblePositionManagerV3(address(this), address(weth));
         vm.expectRevert(GraduationManagerV3.InvalidDependency.selector);
@@ -219,7 +231,12 @@ contract GraduationManagerV3Test is Test {
         ZonkFactoryV3 freshFactory = new ZonkFactoryV3(address(freshFees), address(fresh));
         freshFees.setFactoryOnce(address(freshFactory));
         fresh.setFactoryOnce(address(freshFactory));
-        PermanentLPFeeVaultV3 freshVault = new PermanentLPFeeVaultV3(address(fresh), address(freshFees));
+        (TokenCommunityVaultV3 freshCommunity, TraderRewardsVaultV3 freshRewards) = _bindEcosystemVaults(freshFees);
+        PermanentLPFeeVaultV3 freshVault = new PermanentLPFeeVaultV3(
+            address(fresh), address(freshFees), address(freshCommunity), address(freshRewards)
+        );
+        freshCommunity.setPermanentLPFeeVaultOnce(address(freshVault));
+        freshRewards.setPermanentLPFeeVaultOnce(address(freshVault));
         PermanentLPCustodianDeployerV3 freshDeployer =
             new PermanentLPCustodianDeployerV3(address(fresh), address(freshVault), address(npm));
         vm.prank(address(fresh));
@@ -266,6 +283,17 @@ contract GraduationManagerV3Test is Test {
         address curveAddress;
         (token, curveAddress) = factory.createToken(label, "Z", keccak256(bytes(label)));
         curve = ZonkCurveV3(payable(curveAddress));
+    }
+
+    function _bindEcosystemVaults(FeeManagerV3 targetFees)
+        private
+        returns (TokenCommunityVaultV3 targetCommunity, TraderRewardsVaultV3 targetRewards)
+    {
+        targetCommunity = new TokenCommunityVaultV3(address(this), treasury, address(targetFees));
+        targetRewards = new TraderRewardsVaultV3(address(this), address(targetFees));
+        TraderRewardsDistributorV3 distributor = new TraderRewardsDistributorV3(address(this), address(targetRewards));
+        targetRewards.setDistributorOnce(address(distributor));
+        targetFees.bindEcosystemVaultsOnce(address(targetCommunity), address(targetRewards));
     }
 
     function _graduate(ZonkCurveV3 curve) private {
