@@ -1,4 +1,4 @@
-name: Phase 0 validation
+name: Zonk Fun
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,13 +21,19 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
       - run: pnpm --filter web lint
+
       - run: pnpm --filter web exec tsc --noEmit
+
       - run: pnpm --filter web build
 
-      # The indexer ABI parity test reads the current Foundry artifacts. They
-      # are intentionally ignored by git, so generate them before Go tests.
+      # The indexer ABI parity test reads the current Foundry artifacts.
+      # They are intentionally ignored by git, so generate them before Go tests.
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
       - run: forge build
         working-directory: contracts
 
@@ -36,10 +43,13 @@ jobs:
 
       - run: go test ./...
         working-directory: apps/api
+
       - run: go build ./cmd/server
         working-directory: apps/api
+
       - run: go test ./...
         working-directory: apps/indexer
+
       - run: go build ./cmd/indexer
         working-directory: apps/indexer
 
