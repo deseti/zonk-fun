@@ -1,0 +1,31 @@
+{
+  "chainId": 8453,
+  "network": "Base Mainnet",
+  "protocolVersion": "endpoint-cp-v3",
+  "feePolicy": "zonk-fee-design-b-v3",
+  "uniswapV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "nonfungiblePositionManager": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
+  "poolFee": 10000,
+  "tickSpacing": 200,
+  "mainnetDeployer": "0x2e9f4a39F0530FC8521997d9eC634A637d49FBac",
+  "v3TreasurySafe": "0x71B20D47152Cdf6f9bb1b0CCd0C0FBA52b86a102",
+  "v3CommunityTreasurySafe": "0x11Dbc46C527a76EE9bf167835478EC06F73B7f4b",
+  "zonkFactoryV3": "0x0000000000000000000000000000000000000000",
+  "feeManagerV3": "0x0000000000000000000000000000000000000000",
+  "graduationManagerV3": "0x0000000000000000000000000000000000000000",
+  "tokenCommunityVaultV3": "0x0000000000000000000000000000000000000000",
+  "traderRewardsVaultV3": "0x0000000000000000000000000000000000000000",
+  "traderRewardsDistributorV3": "0x0000000000000000000000000000000000000000",
+  "permanentLPFeeVaultV3": "0x0000000000000000000000000000000000000000",
+  "permanentLPCustodianDeployerV3": "0x0000000000000000000000000000000000000000",
+  "graduationSettlementExecutorV3": "0x0000000000000000000000000000000000000000",
+  "ownershipHandoff": {
+    "feeManagerV3PendingOwner": "0x71B20D47152Cdf6f9bb1b0CCd0C0FBA52b86a102",
+    "tokenCommunityVaultV3PendingOwner": "0x71B20D47152Cdf6f9bb1b0CCd0C0FBA52b86a102",
+    "traderRewardsDistributorV3PendingOwner": "0x71B20D47152Cdf6f9bb1b0CCd0C0FBA52b86a102",
+    "safeAcceptOwnership": "NOT_PERFORMED_BY_DEPLOYMENT_SCRIPT"
+  },
+  "fixedSupply": "1000000000000000000000000000",
+  "notes": "Example only: deployed contract addresses are zero placeholders and must be replaced from a verified Mainnet deployment receipt. This file contains only public addresses and placeholders. No private keys, mnemonics, keystore passwords, or RPC credentials."
+}

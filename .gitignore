@@ -42,6 +42,7 @@ contracts/.forge-snapshots/
 contracts/lib/*/.git/
 contracts/deployments/*.json
 !contracts/deployments/base-sepolia.example.json
+!contracts/deployments/base-mainnet.example.json
 
 # Database / local data
 *.db
