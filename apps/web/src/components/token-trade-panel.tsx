@@ -6,6 +6,7 @@ import type { BudgetBuyQuote, CurveTradeState, ProtectedSellQuote, TradeConfirma
 import { formatNative, formatTokenAmount, formatWeiUsd, type EthUsdReference } from "@/lib/format";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 import { TradeAmountPresets } from "@/components/trade-amount-presets";
+import { explorerTransactionURL, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 import {
   clearPendingTrade,
   DEFAULT_BUY_SLIPPAGE_BPS,
@@ -98,8 +99,8 @@ export function TokenTradePanel(props: Props) {
     ? "Log in with Privy to trade."
     : !props.walletAddress
       ? props.walletMode === "external" ? "The selected external wallet is not connected." : "Waiting for the Privy smart wallet."
-      : props.chainId !== 84532
-        ? "Wrong network. Use Base Sepolia (84532)."
+      : props.chainId !== selectedZonkChainId
+        ? `Wrong network. Use ${selectedZonkChainName} (${selectedZonkChainId}).`
         : null;
 
   const previousIdentityRef = useRef(identity);
@@ -173,7 +174,7 @@ export function TokenTradePanel(props: Props) {
       props.onConfirmed();
     } else if (resolution.status === "reverted") {
       setStatus("reverted");
-      setError("The transaction reverted on Base Sepolia. No trade was applied.");
+      setError(`The transaction reverted on ${selectedZonkChainName}. No trade was applied.`);
     } else {
       setStatus("replaced");
       setError(`The original transaction was ${resolution.replacementReason ?? "replaced"}. Review the replacement before trading again.`);
@@ -206,7 +207,7 @@ export function TokenTradePanel(props: Props) {
         ? { side, ...await quoteBuy(parsePositiveAmount(amount, 18, "ETH"), slippageBps) } as Quote
         : { side, ...await quoteSell(parsePositiveAmount(amount, tokenDecimals, tokenSymbol), slippageBps) } as Quote;
       if (quoteRequestRef.current !== requestID) return;
-      if (latestRef.current.identity !== requestedIdentity || latestRef.current.stateFingerprint !== requestedState || latestRef.current.chainId !== requestedChain || requestedChain !== 84532) {
+      if (latestRef.current.identity !== requestedIdentity || latestRef.current.stateFingerprint !== requestedState || latestRef.current.chainId !== requestedChain || requestedChain !== selectedZonkChainId) {
         return;
       }
       setQuoteRecord({ quote: next, createdAt: Date.now(), identity: requestedIdentity, stateFingerprint: requestedState, chainId: requestedChain });
@@ -237,9 +238,9 @@ export function TokenTradePanel(props: Props) {
       setError(props.walletMode === "external" ? "Connect and select an external wallet before trading." : "Log in with Privy and wait for the smart wallet before trading.");
       return;
     }
-    if (props.chainId !== 84532) {
+    if (props.chainId !== selectedZonkChainId) {
       setStatus("failed");
-      setError(`Switch the ${props.walletMode} wallet to Base Sepolia before trading.`);
+      setError(`Switch the ${props.walletMode} wallet to ${selectedZonkChainName} before trading.`);
       return;
     }
     const existingRecovery = readPendingTrade(props.tokenAddress, props.walletAddress);
@@ -310,7 +311,7 @@ export function TokenTradePanel(props: Props) {
       if (Date.now() >= quoteExpiresAt(quoteRecord)) {
         throw new Error("This quote expired during wallet approval. Request a fresh quote before submitting.");
       }
-      if (latestRef.current.identity !== operationIdentity || latestRef.current.chainId !== 84532 || latestRef.current.stateFingerprint !== quoteRecord.stateFingerprint) {
+      if (latestRef.current.identity !== operationIdentity || latestRef.current.chainId !== selectedZonkChainId || latestRef.current.stateFingerprint !== quoteRecord.stateFingerprint) {
         throw new Error("Wallet, token, network, or curve state changed before submission. Request a fresh quote.");
       }
     };
@@ -472,7 +473,7 @@ export function TokenTradePanel(props: Props) {
         </div> : <div className={`panel-subtle p-4 text-sm leading-6 ${quoteStale || quoteStateChanged ? "text-amber-200" : "text-zinc-500"}`}><p className="font-medium text-zinc-200">Protected quote</p><p className="mt-2">{quoteLoading ? "Refreshing from the active Zonk curve…" : quoteStale ? "This quote expired. Refresh it before submitting." : quoteStateChanged ? "Curve state or balances changed. Waiting for a fresh quote." : "Enter an amount to load contract-backed output, fees, protection, and expiry."}</p></div>}
         {status !== "idle" && <div className={`status-box mt-5 ${status === "confirmed" ? "status-success" : ["failed", "reverted", "replaced"].includes(status) ? "status-error" : status === "confirmation_unknown" ? "status-warning" : ""}`} aria-live="polite" role="status">
           <div className="flex items-start gap-3"><span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${locked && status !== "confirmation_unknown" ? "animate-pulse bg-cyan-300" : status === "confirmed" ? "bg-emerald-300" : ["failed", "reverted", "replaced"].includes(status) ? "bg-rose-300" : "bg-amber-300"}`} /><p className="font-medium">{tradeStatusLabel(status)}</p></div>
-          {hash && <a className="mt-2 block break-all text-cyan-300" href={`https://sepolia.basescan.org/tx/${hash}`} target="_blank" rel="noreferrer">View Explorer</a>}
+          {hash && <a className="mt-2 block break-all text-cyan-300" href={explorerTransactionURL(hash)} target="_blank" rel="noreferrer">View Explorer</a>}
           {(error || quoteStateChanged) && <p className="mt-2 text-sm text-red-200">{error || "Curve state or balances changed. Request a fresh quote."}</p>}
           {status === "confirmed" && <p className="mt-2 text-zinc-400">The trade is confirmed. Balances and indexed views are being refreshed.</p>}
           {status === "confirmation_unknown" && <div className="mt-3 flex flex-wrap gap-2">{hash && <button className="button-secondary" type="button" onClick={() => void recover("check")}>Check Again</button>}{hash && <button className="button-secondary" type="button" onClick={() => void recover("resume")}>Resume Confirmation</button>}<button className="button-secondary border-red-400/40 text-red-200" type="button" onClick={abandon}>Abandon Pending Trade</button></div>}
@@ -550,10 +551,10 @@ function tradeStatusLabel(status: TradeTransactionStatus) {
     idle: "",
     preparing: "Preparing and simulating the protected trade…",
     awaiting_approval: "Confirm token approval in your external wallet…",
-    approval_confirming: "Waiting for the approval receipt on Base Sepolia…",
+    approval_confirming: `Waiting for the approval receipt on ${selectedZonkChainName}…`,
     awaiting_wallet: "Confirm the transaction in your active wallet.",
     submitted: "Transaction submitted.",
-    confirming: "Waiting for Base Sepolia confirmation…",
+    confirming: `Waiting for ${selectedZonkChainName} confirmation…`,
     confirmation_unknown: "Transaction confirmation is unknown. New trades are blocked.",
     confirmed: "Trade confirmed.",
     reverted: "Transaction reverted.",

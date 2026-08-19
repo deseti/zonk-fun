@@ -1,6 +1,8 @@
 import { encodeFunctionData, getAddress, parseEventLogs, type Address, type Hex } from "viem";
 
 export const BASE_SEPOLIA_CHAIN_ID = 84532 as const;
+export const BASE_MAINNET_CHAIN_ID = 8453 as const;
+export type ZonkChainId = typeof BASE_SEPOLIA_CHAIN_ID | typeof BASE_MAINNET_CHAIN_ID;
 export const FIXED_TOKEN_SUPPLY = BigInt("1000000000000000000000000000");
 export const CURVE_ALLOCATION = BigInt("800000000000000000000000000");
 export const EXACT_GRADUATION_GROSS = BigInt("3030303030303030303");
@@ -12,6 +14,30 @@ export const baseSepolia = {
   rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
   blockExplorers: { default: { name: "Basescan", url: "https://sepolia.basescan.org" } },
 } as const;
+
+export const baseMainnet = {
+  id: BASE_MAINNET_CHAIN_ID,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } },
+} as const;
+
+export const supportedZonkChains = [baseSepolia, baseMainnet] as const;
+export type ZonkChain = (typeof supportedZonkChains)[number];
+
+export function isSupportedZonkChainId(value: number): value is ZonkChainId {
+  return value === BASE_SEPOLIA_CHAIN_ID || value === BASE_MAINNET_CHAIN_ID;
+}
+
+export function resolveZonkChain(value: string | number): ZonkChain {
+  const normalized = typeof value === "string" ? value.trim() : value;
+  const chainId = typeof normalized === "number" ? normalized : /^\d+$/.test(normalized) ? Number(normalized) : Number.NaN;
+  if (!Number.isInteger(chainId) || !isSupportedZonkChainId(chainId)) {
+    throw new Error(`Unsupported Zonk chain ID: ${String(value)}`);
+  }
+  return chainId === BASE_MAINNET_CHAIN_ID ? baseMainnet : baseSepolia;
+}
 
 export type ContractAddresses = {
   zonkFactory?: `0x${string}`;

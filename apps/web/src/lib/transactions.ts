@@ -1,4 +1,5 @@
 import { EXACT_GRADUATION_GROSS } from "@zonk/contracts-sdk";
+import { isSelectedZonkChain } from "@/lib/chain";
 
 export type TransactionStatus = "idle" | "preparing" | "awaiting_wallet" | "submitted" | "confirming" | "confirmed" | "failed" | "rejected" | "dev_buy_preparing" | "dev_buy_awaiting_wallet" | "dev_buy_submitted" | "dev_buy_confirming" | "dev_buy_confirmed" | "dev_buy_failed" | "dev_buy_rejected";
 export type TransactionState = { status: TransactionStatus; hash?: `0x${string}`; error?: string };
@@ -93,7 +94,7 @@ function validateOptionalURL(value: string, field: string, errors: Record<string
   }
 }
 
-export const canCreateToken = (chainId: number | undefined, authenticated: boolean, pending: boolean) => chainId === 84532 && authenticated && !pending;
+export const canCreateToken = (chainId: number | undefined, authenticated: boolean, pending: boolean) => isSelectedZonkChain(chainId) && authenticated && !pending;
 
 export type TradeTransactionStatus =
   | "idle"

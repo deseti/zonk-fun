@@ -11,7 +11,7 @@ import { TokenChart } from "@/components/token-chart";
 import { hasIndexedSettlement, isGraduatedToken, TokenGraduation } from "@/components/token-graduation";
 import { MobileTradeActions, TokenTradeSheetProvider, TradeSheetSurface } from "@/components/mobile-trade-sheet";
 import { api, apiAssetURL } from "@/lib/api";
-import { validAddress } from "@/lib/chain";
+import { explorerAddressURL, explorerTransactionURL, selectedZonkChainId, selectedZonkChainName, validAddress } from "@/lib/chain";
 import { readCurveOnchain, readTokenOnchain } from "@/lib/contracts";
 import { formatCount, formatNative, formatTokenAmount, formatWeiUsd, type EthUsdReference } from "@/lib/format";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
@@ -98,9 +98,9 @@ export default function TokenDetailPage() {
 
       <div data-mobile-section={mobileSection === "activity" ? "activity" : "hidden"}>
         <TokenActivity tokenAddress={address} />
-        <section className="terminal-panel mt-10 p-5"><div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="eyebrow">Provenance</p><h2 className="section-heading mt-2">Canonical launch record</h2></div><span className="badge-neutral">Base Sepolia · 84532</span></div><dl className="mt-6 grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2 lg:grid-cols-3"><Detail label="Token contract" value={token.address} link={`https://sepolia.basescan.org/address/${token.address}`} /><Detail label="Curve contract" value={token.curve?.address ?? "Not indexed"} link={token.curve?.address ? `https://sepolia.basescan.org/address/${token.curve.address}` : undefined} /><Detail label="Created at block" value={String(token.created_at.block_number)} /><Detail label="Initial supply" value={formatTokenAmount(token.initial_supply, 18, token.symbol)} /><Detail label="Onchain read" value={onchain ?? "Checking…"} /><Detail label="Launch transaction" value={token.created_at.transaction_hash} link={`https://sepolia.basescan.org/tx/${token.created_at.transaction_hash}`} /></dl></section>
+        <section className="terminal-panel mt-10 p-5"><div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="eyebrow">Provenance</p><h2 className="section-heading mt-2">Canonical launch record</h2></div><span className="badge-neutral">{selectedZonkChainName} · {selectedZonkChainId}</span></div><dl className="mt-6 grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2 lg:grid-cols-3"><Detail label="Token contract" value={token.address} link={explorerAddressURL(token.address)} /><Detail label="Curve contract" value={token.curve?.address ?? "Not indexed"} link={token.curve?.address ? explorerAddressURL(token.curve.address) : undefined} /><Detail label="Created at block" value={String(token.created_at.block_number)} /><Detail label="Initial supply" value={formatTokenAmount(token.initial_supply, 18, token.symbol)} /><Detail label="Onchain read" value={onchain ?? "Checking…"} /><Detail label="Launch transaction" value={token.created_at.transaction_hash} link={explorerTransactionURL(token.created_at.transaction_hash)} /></dl></section>
       </div>
-      <p className="mt-6 text-center text-xs text-zinc-600">Base Sepolia assets have no real-world value. USD figures are reference conversions only.</p>
+      <p className="mt-6 text-center text-xs text-zinc-600">{selectedZonkChainName} assets are onchain assets. USD figures are reference conversions only.</p>
       <MobileTradeActions symbol={token.symbol} />
     </main>
   </TokenTradeSheetProvider>;

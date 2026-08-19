@@ -44,7 +44,7 @@ type ChainlinkETHUSDReader struct {
 
 func NewChainlinkETHUSDReader(rpcURL, feed string, maxAge time.Duration, client *http.Client) (*ChainlinkETHUSDReader, error) {
 	if strings.TrimSpace(rpcURL) == "" {
-		return nil, errors.New("Base Sepolia RPC URL is required")
+		return nil, errors.New("RPC URL is required")
 	}
 	if !isAddress(feed) {
 		return nil, errors.New("valid Chainlink feed address is required")
@@ -109,7 +109,7 @@ func (r *ChainlinkETHUSDReader) Read(ctx context.Context) (ETHUSDPrice, error) {
 		PriceDecimals: priceDecimals,
 		UpdatedAt:     updatedAt,
 		Feed:          r.feed,
-		Source:        "chainlink_base_sepolia",
+		Source:        "chainlink_eth_usd",
 		MaxAgeSeconds: int64(r.maxAge / time.Second),
 	}, nil
 }

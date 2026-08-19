@@ -5,12 +5,12 @@ import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatEther, formatUnits, parseEther, parseUnits, type Address, type Hash } from "viem";
-import { baseSepolia } from "@zonk/contracts-sdk";
 import { createExternalWalletClient, erc20TradeAbi, publicClient, sendSmartWalletTransaction } from "@/lib/contracts";
+import { explorerTransactionURL, selectedZonkChain, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 import { selectActiveSigner, tradeInvalidationKeys } from "@/components/token-trading";
 import { TradeAmountPresets } from "@/components/trade-amount-presets";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
-import { approvalCall, BASE_SEPOLIA_CHAIN_ID, buildGraduatedSwapTransaction, configuredUniswapV3, orchestrateGraduatedSwap, quoteGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, validateCanonicalPool, type GraduatedQuote, type GraduatedSwapTransaction } from "@/lib/uniswap-v3";
+import { approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, orchestrateGraduatedSwap, quoteGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, validateCanonicalPool, type GraduatedQuote, type GraduatedSwapTransaction } from "@/lib/uniswap-v3";
 
 type State = { eth: bigint; token: bigint; allowance: bigint; decimals: number };
 type SwapStatus = "idle" | "quoting" | "awaiting_approval" | "approval_confirming" | "awaiting_wallet" | "submitted" | "confirming" | "confirmed" | "error";
@@ -38,7 +38,7 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
   const poolQuery = useQuery({ queryKey: ["graduated-pool", tokenAddress, canonicalPoolAddress], queryFn: () => validateCanonicalPool(canonicalPoolAddress!, tokenAddress), enabled: Boolean(canonicalPoolAddress && configuredUniswapV3()), staleTime: 30_000 });
   const stateQuery = useQuery({ queryKey: ["graduated-swap-state", tokenAddress, wallet, poolQuery.data?.router], queryFn: () => readState(tokenAddress, wallet!, poolQuery.data!.router), enabled: Boolean(wallet && poolQuery.data), refetchInterval: 15_000 });
   const config = configuredUniswapV3();
-  const guard = !config ? "Swap configuration unavailable: verified Base Sepolia QuoterV2, SwapRouter02, and factory addresses are required." : !canonicalPoolAddress ? "No indexed canonical graduation pool is available for this token." : !authenticated ? "Log in with Privy to swap." : !wallet ? "Connect the active wallet to swap." : chainId !== BASE_SEPOLIA_CHAIN_ID ? "Switch the active wallet to Base Sepolia (84532)." : poolQuery.isError ? poolQuery.error.message : null;
+  const guard = !config ? `Swap configuration unavailable: verified ${selectedZonkChainName} QuoterV2, SwapRouter02, and factory addresses are required.` : !canonicalPoolAddress ? "No indexed canonical graduation pool is available for this token." : !authenticated ? "Log in with Privy to swap." : !wallet ? "Connect the active wallet to swap." : chainId !== selectedZonkChainId ? `Switch the active wallet to ${selectedZonkChainName} (${selectedZonkChainId}).` : poolQuery.isError ? poolQuery.error.message : null;
 
   const requestQuote = useCallback(async () => {
     if (guard || !poolQuery.data || !wallet) return;
@@ -97,7 +97,7 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
       setStatus("submitted");
       setStatus("confirming");
       const receipt = await publicClient.waitForTransactionReceipt({ hash: swapHash, confirmations: 1, timeout: 120_000 });
-      if (receipt.status !== "success") throw new Error("The swap reverted on Base Sepolia.");
+      if (receipt.status !== "success") throw new Error(`The swap reverted on ${selectedZonkChainName}.`);
       setStatus("confirmed");
       await Promise.all([["graduated-swap-state", tokenAddress], ...tradeInvalidationKeys(tokenAddress)].map((queryKey) => queryClient.invalidateQueries({ queryKey })));
     } catch (reason) {
@@ -122,9 +122,9 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
       <label className="mt-4 block text-xs text-zinc-500">Slippage (%)<input className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 p-3 text-white" inputMode="decimal" value={slippage} onChange={(event) => { setSlippage(event.target.value); setQuote(undefined); }} /></label>
       {quote && <div className="mt-4 rounded-lg border border-white/8 p-3 text-sm"><p>Receive ~ {formatUnits(quote.amountOut, side === "buy" ? stateQuery.data?.decimals ?? 18 : 18)} {side === "buy" ? symbol : "ETH"}</p><p className="mt-1 text-zinc-500">Minimum received {formatUnits(quote.minimumOut, side === "buy" ? stateQuery.data?.decimals ?? 18 : 18)} · Pool fee 1%</p></div>}
       <button className="button-primary mt-5 w-full" type="button" disabled={!quote || pending || status === "quoting"} onClick={() => void submit()}>{status === "quoting" ? "Quoting…" : "Confirm swap"}</button>
-      <p className="mt-3 text-xs text-zinc-500">{statusText[status]}{hash && <> · <a className="text-cyan-300" href={`https://sepolia.basescan.org/tx/${hash}`} target="_blank" rel="noreferrer">View transaction ↗</a></>}</p>
+      <p className="mt-3 text-xs text-zinc-500">{statusText[status]}{hash && <> · <a className="text-cyan-300" href={explorerTransactionURL(hash)} target="_blank" rel="noreferrer">View transaction ↗</a></>}</p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-      <details className="mt-4 text-xs text-zinc-600"><summary>Execution details</summary><p className="mt-2 break-all">Pool {canonicalPoolAddress}<br />SwapRouter02 {poolQuery.data?.router}<br />Base Sepolia · quote deadline 5 minutes</p></details>
+      <details className="mt-4 text-xs text-zinc-600"><summary>Execution details</summary><p className="mt-2 break-all">Pool {canonicalPoolAddress}<br />SwapRouter02 {poolQuery.data?.router}<br />{selectedZonkChainName} · quote deadline 5 minutes</p></details>
     </>}
   </section>;
 }
@@ -137,12 +137,12 @@ async function walletTransport(mode: "embedded" | "external" | null, wallet: Add
     if (signer.wallet.address.toLowerCase() !== wallet.toLowerCase()) throw new Error("The selected external wallet no longer matches the active address.");
     const provider = await signer.wallet.getEthereumProvider();
     const external = createExternalWalletClient(provider, wallet);
-    return (transaction) => external.sendTransaction({ account: wallet, chain: baseSepolia, ...transaction });
+    return (transaction) => external.sendTransaction({ account: wallet, chain: selectedZonkChain, ...transaction });
   }
   if (mode === "embedded") {
-    const embedded = await getClientForChain({ id: BASE_SEPOLIA_CHAIN_ID });
+    const embedded = await getClientForChain({ id: selectedZonkChainId });
     const signer = selectActiveSigner(mode, { embedded });
-    return (transaction, label) => sendSmartWalletTransaction(signer.client, { calls: [transaction] }, { action: label, description: `${label} ${symbol} on Base Sepolia.` });
+    return (transaction, label) => sendSmartWalletTransaction(signer.client, { calls: [transaction] }, { action: label, description: `${label} ${symbol} on ${selectedZonkChainName}.` });
   }
   throw new Error("No active wallet mode is selected.");
 }

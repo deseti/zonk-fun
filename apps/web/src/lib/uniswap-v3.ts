@@ -1,14 +1,24 @@
 import { encodeFunctionData, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { erc20TradeAbi, publicClient } from "@/lib/contracts";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { BASE_MAINNET_CHAIN_ID } from "@zonk/contracts-sdk";
 
 /** Official Uniswap Base Sepolia deployments (developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments). */
 export const BASE_SEPOLIA_WETH = "0x4200000000000000000000000000000000000006" as const;
 export const BASE_SEPOLIA_V3_FACTORY = "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24" as const;
 export const BASE_SEPOLIA_QUOTER_V2 = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27" as const;
 export const BASE_SEPOLIA_SWAP_ROUTER_02 = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4" as const;
+export const BASE_MAINNET_WETH = "0x4200000000000000000000000000000000000006" as const;
+export const BASE_MAINNET_V3_FACTORY = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD" as const;
+export const BASE_MAINNET_QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a" as const;
+export const BASE_MAINNET_SWAP_ROUTER_02 = "0x2626664c2603336E57B271c5C0b26F421741e481" as const;
 export const CANONICAL_POOL_FEE = 10_000;
 export const QUOTE_TTL_MS = 60_000;
-export const BASE_SEPOLIA_CHAIN_ID = 84_532;
+
+const selectedWeth = selectedZonkChainId === BASE_MAINNET_CHAIN_ID ? BASE_MAINNET_WETH : BASE_SEPOLIA_WETH;
+const selectedCanonicalFactory = selectedZonkChainId === BASE_MAINNET_CHAIN_ID
+  ? BASE_MAINNET_V3_FACTORY
+  : BASE_SEPOLIA_V3_FACTORY;
 
 /**
  * Uniswap swap-router-contracts Constants.CONTRACT_BALANCE.
@@ -97,9 +107,13 @@ export async function orchestrateGraduatedSwap(input: {
 }
 
 export function configuredUniswapV3(): UniswapV3Config | undefined {
-  const raw = [process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_FACTORY];
+  const raw = selectedZonkChainId === BASE_MAINNET_CHAIN_ID
+    ? [process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY]
+    : [process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_FACTORY];
   if (raw.some((value) => !value || !isAddress(value) || /^0x0{40}$/i.test(value))) return undefined;
-  return { quoter: getAddress(raw[0]!), router: getAddress(raw[1]!), factory: getAddress(raw[2]!) };
+  const config = { quoter: getAddress(raw[0]!), router: getAddress(raw[1]!), factory: getAddress(raw[2]!) };
+  if (config.factory.toLowerCase() !== selectedCanonicalFactory.toLowerCase()) return undefined;
+  return config;
 }
 
 export function minimumOutput(amountOut: bigint, slippageBps: number): bigint {
@@ -114,37 +128,37 @@ export function quoteIsFresh(quote: GraduatedQuote, wallet: Address, pool: Addre
 
 export async function validateCanonicalPool(pool: Address, token: Address): Promise<ValidatedPool> {
   const config = configuredUniswapV3();
-  if (!config) throw new Error("Uniswap V3 configuration is unavailable. Set the verified Base Sepolia QuoterV2, SwapRouter02, and factory addresses.");
-  const [poolCode, quoterCode, routerCode, factoryCode, wethCode] = await Promise.all([pool, config.quoter, config.router, config.factory, BASE_SEPOLIA_WETH].map((address) => publicClient.getBytecode({ address })));
-  if (!poolCode || poolCode === "0x") throw new Error("The indexed canonical pool has no deployed bytecode on Base Sepolia.");
-  if (!quoterCode || quoterCode === "0x") throw new Error("Configured QuoterV2 has no deployed bytecode on Base Sepolia.");
-  if (!routerCode || routerCode === "0x") throw new Error("Configured SwapRouter02 has no deployed bytecode on Base Sepolia.");
-  if (!factoryCode || factoryCode === "0x" || !wethCode || wethCode === "0x") throw new Error("Configured canonical Uniswap dependency has no deployed bytecode on Base Sepolia.");
+  if (!config) throw new Error(`Uniswap V3 configuration is unavailable for ${selectedZonkChainName}.`);
+  const [poolCode, quoterCode, routerCode, factoryCode, wethCode] = await Promise.all([pool, config.quoter, config.router, config.factory, selectedWeth].map((address) => publicClient.getBytecode({ address })));
+  if (!poolCode || poolCode === "0x") throw new Error(`The indexed canonical pool has no deployed bytecode on ${selectedZonkChainName}.`);
+  if (!quoterCode || quoterCode === "0x") throw new Error(`Configured QuoterV2 has no deployed bytecode on ${selectedZonkChainName}.`);
+  if (!routerCode || routerCode === "0x") throw new Error(`Configured SwapRouter02 has no deployed bytecode on ${selectedZonkChainName}.`);
+  if (!factoryCode || factoryCode === "0x" || !wethCode || wethCode === "0x") throw new Error(`Configured canonical Uniswap dependency has no deployed bytecode on ${selectedZonkChainName}.`);
   const [token0, token1, fee, factory, quoterFactory, quoterWeth, routerFactory, routerWeth] = await Promise.all([
     publicClient.readContract({ address: pool, abi: poolAbi, functionName: "token0" }), publicClient.readContract({ address: pool, abi: poolAbi, functionName: "token1" }), publicClient.readContract({ address: pool, abi: poolAbi, functionName: "fee" }), publicClient.readContract({ address: pool, abi: poolAbi, functionName: "factory" }),
     publicClient.readContract({ address: config.quoter, abi: quoterV2Abi, functionName: "factory" }), publicClient.readContract({ address: config.quoter, abi: quoterV2Abi, functionName: "WETH9" }), publicClient.readContract({ address: config.router, abi: swapRouter02Abi, functionName: "factory" }), publicClient.readContract({ address: config.router, abi: swapRouter02Abi, functionName: "WETH9" }),
   ]);
   const pair = new Set([getAddress(token0).toLowerCase(), getAddress(token1).toLowerCase()]);
-  if (pair.size !== 2 || !pair.has(BASE_SEPOLIA_WETH.toLowerCase()) || !pair.has(getAddress(token).toLowerCase())) throw new Error("The canonical pool token pair is not exactly WETH and this graduated token.");
+  if (pair.size !== 2 || !pair.has(selectedWeth.toLowerCase()) || !pair.has(getAddress(token).toLowerCase())) throw new Error("The canonical pool token pair is not exactly WETH and this graduated token.");
   if (fee !== CANONICAL_POOL_FEE) throw new Error("The canonical pool must use the 1% Uniswap V3 fee tier.");
-  for (const address of [factory, quoterFactory, routerFactory]) if (getAddress(address).toLowerCase() !== config.factory.toLowerCase()) throw new Error("The pool or configured periphery is not linked to the configured canonical Uniswap V3 factory.");
-  for (const address of [quoterWeth, routerWeth]) if (getAddress(address).toLowerCase() !== BASE_SEPOLIA_WETH.toLowerCase()) throw new Error("Configured periphery is not linked to Base Sepolia WETH.");
+  for (const address of [factory, quoterFactory, routerFactory]) if (getAddress(address).toLowerCase() !== config.factory.toLowerCase()) throw new Error("The pool or configured periphery is not linked to the selected chain's canonical Uniswap V3 factory.");
+  for (const address of [quoterWeth, routerWeth]) if (getAddress(address).toLowerCase() !== selectedWeth.toLowerCase()) throw new Error(`Configured periphery is not linked to ${selectedZonkChainName} WETH.`);
   return { ...config, pool: getAddress(pool), token: getAddress(token), token0: getAddress(token0), token1: getAddress(token1) };
 }
 
 export async function quoteGraduatedSwap(pool: ValidatedPool, side: "buy" | "sell", amountIn: bigint, slippageBps: number, wallet: Address): Promise<GraduatedQuote> {
   if (amountIn <= BigInt(0)) throw new Error("Enter an amount greater than zero.");
-  const tokenIn = side === "buy" ? BASE_SEPOLIA_WETH : pool.token;
-  const tokenOut = side === "buy" ? pool.token : BASE_SEPOLIA_WETH;
+  const tokenIn = side === "buy" ? selectedWeth : pool.token;
+  const tokenOut = side === "buy" ? pool.token : selectedWeth;
   const result = await publicClient.readContract({ address: pool.quoter, abi: quoterV2Abi as never, functionName: "quoteExactInputSingle", args: [{ tokenIn, tokenOut, amountIn, fee: CANONICAL_POOL_FEE, sqrtPriceLimitX96: BigInt(0) }] } as never) as unknown as readonly [bigint];
   const amountOut: bigint = result[0];
   const now = Date.now();
-  return { side, amountIn, amountOut, minimumOut: minimumOutput(amountOut, slippageBps), slippageBps, createdAt: now, deadline: BigInt(Math.floor(now / 1000) + 300), pool: pool.pool, wallet, chainId: BASE_SEPOLIA_CHAIN_ID };
+  return { side, amountIn, amountOut, minimumOut: minimumOutput(amountOut, slippageBps), slippageBps, createdAt: now, deadline: BigInt(Math.floor(now / 1000) + 300), pool: pool.pool, wallet, chainId: selectedZonkChainId };
 }
 
 /** Builds the sole payload used for raw simulation and both wallet transports. */
 export function buildGraduatedSwapTransaction(pool: ValidatedPool, quote: GraduatedQuote, recipient: Address): GraduatedSwapTransaction {
-  const params = { tokenIn: quote.side === "buy" ? BASE_SEPOLIA_WETH : pool.token, tokenOut: quote.side === "buy" ? pool.token : BASE_SEPOLIA_WETH, fee: CANONICAL_POOL_FEE, recipient: quote.side === "buy" ? recipient : pool.router, amountIn: quote.side === "buy" ? CONTRACT_BALANCE : quote.amountIn, amountOutMinimum: quote.minimumOut, sqrtPriceLimitX96: BigInt(0) };
+  const params = { tokenIn: quote.side === "buy" ? selectedWeth : pool.token, tokenOut: quote.side === "buy" ? pool.token : selectedWeth, fee: CANONICAL_POOL_FEE, recipient: quote.side === "buy" ? recipient : pool.router, amountIn: quote.side === "buy" ? CONTRACT_BALANCE : quote.amountIn, amountOutMinimum: quote.minimumOut, sqrtPriceLimitX96: BigInt(0) };
   if (quote.side === "buy") {
     // SwapRouter02 does not implicitly wrap msg.value for exactInputSingle.
     // Wrap into router-held WETH, then swap it to the active wallet.

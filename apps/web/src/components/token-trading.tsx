@@ -14,6 +14,7 @@ import type { TradeRecovery } from "@/lib/transactions";
 import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
+import { explorerTransactionURL, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 
 export function TokenTrading({ tokenAddress, symbol, tokenPriceWei, graduated = false, canonicalPoolAddress }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null; graduated?: boolean; canonicalPoolAddress?: Address }) {
   if (graduated) return <GraduatedTokenSwap tokenAddress={tokenAddress} canonicalPoolAddress={canonicalPoolAddress} symbol={symbol} />;
@@ -44,7 +45,7 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
   const quoteSell = (tokenAmount: bigint, slippageBps: number) => quoteSellAmount(tokenAddress, tokenAmount, slippageBps);
 
   const execute: TradeExecution = async (quote, report, assertSubmissionReady) => {
-    if (chainId !== 84532 || !walletAddress) throw new Error(`Switch the ${mode} wallet to Base Sepolia before trading.`);
+    if (chainId !== selectedZonkChainId || !walletAddress) throw new Error(`Switch the ${mode} wallet to ${selectedZonkChainName} before trading.`);
     report("preparing");
     assertSubmissionReady();
     let hash;
@@ -66,7 +67,7 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
         }, assertSubmissionReady);
       }
     } else {
-      const client = await getClientForChain({ id: 84532 });
+      const client = await getClientForChain({ id: selectedZonkChainId });
       assertSubmissionReady();
       const signer = selectActiveSigner(mode, { embedded: client });
       report("awaiting_wallet");
@@ -95,8 +96,8 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
     void Promise.all(tradeInvalidationKeys(tokenAddress).map((queryKey) => queryClient.invalidateQueries({ queryKey })));
   };
 
-  if (availabilityQuery.isError) return <div className="status-box status-error">The deployed curve could not be read from Base Sepolia.</div>;
-  if (availabilityQuery.isPending) return <div className="status-box text-zinc-400">Checking the token’s Base Sepolia curve…</div>;
+  if (availabilityQuery.isError) return <div className="status-box status-error">The deployed curve could not be read from {selectedZonkChainName}.</div>;
+  if (availabilityQuery.isPending) return <div className="status-box text-zinc-400">Checking the token’s {selectedZonkChainName} curve…</div>;
 	if (availabilityQuery.data === null) return <div className="status-box status-warning">The canonical endpoint curve is not available for this token.</div>;
   return <TokenTradePanel
       authenticated={authenticated}
@@ -188,7 +189,7 @@ function TradeHistory({ tokenAddress, symbol, walletAddress }: { tokenAddress: A
         <div className="flex items-center justify-between gap-3"><span className={trade.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{trade.side.toUpperCase()}</span><span className="font-mono text-xs text-zinc-600">{trade.source === "uniswap_v3" ? "Uniswap V3" : "Curve"} · #{trade.block_number}</span></div>
         <div><p className="font-medium text-zinc-100">{formatWeiUsd(trade.reserve_amount, reference)}</p><p className="mt-0.5 text-xs text-zinc-500">{formatTokenAmount(trade.token_amount, 18, symbol)} · {formatNative(trade.reserve_amount)}</p></div>
         <p className="address truncate" title={trade.trader}>{trade.trader}</p>
-        <a className="inline-flex min-h-11 items-center text-cyan-300 hover:text-cyan-200 lg:justify-end lg:text-right" href={`https://sepolia.basescan.org/tx/${trade.transaction_hash}`} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
+        <a className="inline-flex min-h-11 items-center text-cyan-300 hover:text-cyan-200 lg:justify-end lg:text-right" href={explorerTransactionURL(trade.transaction_hash)} target="_blank" rel="noreferrer">View on BaseScan ↗</a>
       </li>)}
     </ul>}{!reference && <p className="border-t border-white/8 px-4 py-3 text-xs text-zinc-600">USD unavailable · exact indexed ETH values remain visible.</p>}
   </section>;

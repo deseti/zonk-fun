@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppProviders } from "@/providers/app-providers";
 import { Navigation } from "@/components/navigation";
+import { selectedZonkChainName } from "@/lib/chain";
 
 type RootLayoutProps = Readonly<{
   children: ReactNode;
@@ -21,7 +22,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Zonk.fun launch and trade community tokens",
-  description: "A non-custodial token launchpad on Base Sepolia.",
+  description: `A non-custodial token launchpad on ${selectedZonkChainName}.`,
 };
 
 export const viewport: Viewport = {

@@ -1,7 +1,6 @@
 import type { Token } from "@zonk/types";
 import { formatNative, formatTokenAmount, graduationProgress } from "@/lib/format";
-
-const BASESCAN = "https://sepolia.basescan.org";
+import { explorerAddressURL, explorerTransactionURL } from "@/lib/chain";
 
 export function isGraduatedToken(token: Token) {
   return token.graduation?.phase.toLowerCase() === "graduated";
@@ -42,19 +41,19 @@ export function TokenGraduation({ token }: { token: Token }) {
       {hasSettlement ? <>
         <dl className="mt-4 grid gap-3 border-t border-white/8 pt-4 text-sm">
           <GraduationDetail label="LP custody" value="Permanent" />
-          {canonicalPool && <GraduationDetail label="Canonical V3 pool" value={canonicalPool} href={`${BASESCAN}/address/${canonicalPool}`} />}
-          <GraduationDetail label="LP custodian" value={graduation.lp_custodian_address!} href={`${BASESCAN}/address/${graduation.lp_custodian_address}`} />
+          {canonicalPool && <GraduationDetail label="Canonical V3 pool" value={canonicalPool} href={explorerAddressURL(canonicalPool)} />}
+          <GraduationDetail label="LP custodian" value={graduation.lp_custodian_address!} href={explorerAddressURL(graduation.lp_custodian_address!)} />
           <GraduationDetail label="Position NFT" value={`#${graduation.position_token_id}`} />
           <GraduationDetail label="V3 liquidity" value={formatExactInteger(graduation.liquidity!)} />
         </dl>
         <div className="mt-4 flex flex-wrap gap-2">
-          {graduation.curve_terminal_at && <ExplorerLink href={`${BASESCAN}/tx/${graduation.curve_terminal_at.transaction_hash}`} label="Graduation transaction" />}
-          {graduation.settled_at && <ExplorerLink href={`${BASESCAN}/tx/${graduation.settled_at.transaction_hash}`} label="Settlement transaction" />}
+          {graduation.curve_terminal_at && <ExplorerLink href={explorerTransactionURL(graduation.curve_terminal_at.transaction_hash)} label="Graduation transaction" />}
+          {graduation.settled_at && <ExplorerLink href={explorerTransactionURL(graduation.settled_at.transaction_hash)} label="Settlement transaction" />}
         </div>
       </> : <div className="status-box status-warning mt-4 text-sm leading-6">External settlement details are not indexed yet.</div>}
 
-      {!hasSettlement && graduation.curve_terminal_at && <div className="mt-3"><ExplorerLink href={`${BASESCAN}/tx/${graduation.curve_terminal_at.transaction_hash}`} label="Graduation transaction" /></div>}
-      {!hasSettlement && canonicalPool && <div className="mt-3 text-sm"><GraduationDetail label="Canonical V3 pool" value={canonicalPool} href={`${BASESCAN}/address/${canonicalPool}`} /></div>}
+      {!hasSettlement && graduation.curve_terminal_at && <div className="mt-3"><ExplorerLink href={explorerTransactionURL(graduation.curve_terminal_at.transaction_hash)} label="Graduation transaction" /></div>}
+      {!hasSettlement && canonicalPool && <div className="mt-3 text-sm"><GraduationDetail label="Canonical V3 pool" value={canonicalPool} href={explorerAddressURL(canonicalPool)} /></div>}
     </div>
   </section>;
 }

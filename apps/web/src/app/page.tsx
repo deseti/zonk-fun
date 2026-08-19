@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DiscoveryMarketplace } from "@/components/discovery-marketplace";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 
 export default function Home() {
   return <main className="market-container market-page flex-1">
@@ -8,8 +9,8 @@ export default function Home() {
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="badge-success"><span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" />Live testnet</span>
-            <span className="badge-neutral">Base Sepolia · 84532</span>
+            <span className="badge-success"><span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" />Configured network</span>
+            <span className="badge-neutral">{selectedZonkChainName} · {selectedZonkChainId}</span>
           </div>
           <h1 id="home-heading" className="mt-3 text-[1.7rem] font-semibold leading-tight tracking-[-0.045em] text-white sm:mt-4 sm:text-4xl lg:text-[2.75rem]">Discover what&apos;s launching on Zonk.</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400 sm:mt-3 sm:text-base">Explore community tokens, follow live indexed markets, and trade transparent bonding curves on Base.</p>

@@ -501,11 +501,10 @@ func projectUniswapV3Swap(ctx context.Context, tx pgx.Tx, chain int64, l types.L
 	if !ok0 || !ok1 || amount0.Sign() == 0 || amount1.Sign() == 0 || amount0.Sign() == amount1.Sign() {
 		return fmt.Errorf("invalid Uniswap V3 Swap signed amounts at %s", l.TxHash.Hex())
 	}
-	// Uniswap orders pool tokens by address. Base Sepolia WETH is token0 for
-	// P10G, but this comparison also handles a canonical pool where WETH is
-	// token1.
+	// Uniswap orders pool tokens by address. This comparison handles the
+	// canonical Base WETH predeploy as either token0 or token1.
 	quoteSigned, tokenSigned := amount0, amount1
-	if strings.ToLower(baseSepoliaWETH) > strings.ToLower(token) {
+	if strings.ToLower(baseWETH) > strings.ToLower(token) {
 		quoteSigned, tokenSigned = amount1, amount0
 	}
 	side := "buy"

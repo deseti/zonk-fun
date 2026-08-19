@@ -57,7 +57,7 @@ export const apiAssetURL=(path:string|undefined)=>path?.startsWith("/")?`${publi
 export const api = {
   health: () => request<{ status: string; service: string; request_id?: string }>("/health", serviceSchema),
   ready: () => request<{ status: string; service: string; request_id?: string }>("/readyz", serviceSchema),
-  ethUsdPrice: () => request<ETHUSDPrice>("/api/v1/prices/eth-usd", z.object({ price: z.string().regex(/^\d+\.\d{8}$/), price_decimals: z.literal(8), updated_at: z.iso.datetime(), feed: z.string().regex(/^0x[0-9a-fA-F]{40}$/), source: z.literal("chainlink_base_sepolia"), max_age_seconds: z.number().int().positive() })),
+  ethUsdPrice: () => request<ETHUSDPrice>("/api/v1/prices/eth-usd", z.object({ price: z.string().regex(/^\d+\.\d{8}$/), price_decimals: z.literal(8), updated_at: z.iso.datetime(), feed: z.string().regex(/^0x[0-9a-fA-F]{40}$/), source: z.literal("chainlink_eth_usd"), max_age_seconds: z.number().int().positive() })),
   listTokens: (query = "") => request<TokenPage>(`/api/v1/tokens${query}`, tokenPageSchema),
   trending: (query = "") => request<TokenPage>(`/api/v1/trending${query}`, tokenPageSchema),
   token: (address: string) => request<Token>(`/api/v1/tokens/${encodeURIComponent(address)}`, tokenSchema),

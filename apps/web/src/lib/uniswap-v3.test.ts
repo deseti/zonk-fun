@@ -1,6 +1,6 @@
 import { decodeFunctionData, getAddress } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BASE_SEPOLIA_SWAP_ROUTER_02, BASE_SEPOLIA_V3_FACTORY, BASE_SEPOLIA_WETH, BASE_SEPOLIA_QUOTER_V2, CANONICAL_POOL_FEE, CONTRACT_BALANCE, approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, minimumOutput, orchestrateGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, swapRouter02Abi, validateCanonicalPool, waitForGraduatedAllowance, type GraduatedQuote, type GraduatedExecutionState, type ValidatedPool } from "./uniswap-v3";
+import { BASE_MAINNET_QUOTER_V2, BASE_MAINNET_SWAP_ROUTER_02, BASE_MAINNET_V3_FACTORY, BASE_MAINNET_WETH, BASE_SEPOLIA_SWAP_ROUTER_02, BASE_SEPOLIA_V3_FACTORY, BASE_SEPOLIA_WETH, BASE_SEPOLIA_QUOTER_V2, CANONICAL_POOL_FEE, CONTRACT_BALANCE, approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, minimumOutput, orchestrateGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, swapRouter02Abi, validateCanonicalPool, waitForGraduatedAllowance, type GraduatedQuote, type GraduatedExecutionState, type ValidatedPool } from "./uniswap-v3";
 import { erc20TradeAbi, publicClient } from "@/lib/contracts";
 
 const token = "0x0000000000000000000000000000000000000011" as const;
@@ -16,6 +16,13 @@ describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
 
   it("uses the official SwapRouter02 CONTRACT_BALANCE sentinel", () => {
     expect(CONTRACT_BALANCE).toBe(BigInt(0));
+  });
+
+  it("defines the canonical Base Mainnet Uniswap V3 dependencies", () => {
+    expect(BASE_MAINNET_WETH).toBe("0x4200000000000000000000000000000000000006");
+    expect(BASE_MAINNET_V3_FACTORY).toBe("0x33128a8fC17869897dcE68Ed026d694621f6FDfD");
+    expect(BASE_MAINNET_QUOTER_V2).toBe("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a");
+    expect(BASE_MAINNET_SWAP_ROUTER_02).toBe("0x2626664c2603336E57B271c5C0b26F421741e481");
   });
 
   it("protects quoted output with integer slippage and rejects invalid inputs", () => {

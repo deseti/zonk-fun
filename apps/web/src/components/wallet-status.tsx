@@ -2,9 +2,8 @@
 
 import { useConnectWallet, useCreateWallet, useLogin, usePrivy, useWallets, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
 import { useSmartWallets, type SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
-import { baseSepolia } from "@zonk/contracts-sdk";
 import { useState, type ReactNode } from "react";
-import { isBaseSepolia, validAddress } from "@/lib/chain";
+import { isSelectedZonkChain, selectedZonkChain, selectedZonkChainId, selectedZonkChainName, validAddress } from "@/lib/chain";
 import { derivePrivyWalletState, isExternalWallet, isPrivyEmbeddedWallet, parsePrivyChainId, privyExternalWalletList, privyLoginMethods } from "@/lib/wallet";
 import { useActiveWallet, walletModeLabel } from "@/providers/active-wallet-provider";
 
@@ -23,8 +22,8 @@ export async function switchPrivyEmbeddedWallet(
   embeddedWallet: Pick<BaseConnectedEthereumWallet, "switchChain">,
   getClientForChain: ({ id }: { id: number }) => Promise<SmartWalletClientType | undefined>,
 ) {
-  await embeddedWallet.switchChain(baseSepolia.id);
-  return getClientForChain({ id: baseSepolia.id });
+  await embeddedWallet.switchChain(selectedZonkChainId);
+  return getClientForChain({ id: selectedZonkChainId });
 }
 
 export function WalletStatus({ compact = false, short = false }: { compact?: boolean; short?: boolean }) {
@@ -63,7 +62,7 @@ export function WalletStatus({ compact = false, short = false }: { compact?: boo
     });
   };
   const runCreateWallet = async () => { setActionError(null); setCreatePending(true); try { await createWallet(); } catch { setActionError("Wallet creation is unavailable right now."); } finally { setCreatePending(false); } };
-  const switchNetwork = async () => { const wallet = mode === "external" ? external : embedded; if (!wallet) return; setActionError(null); setSwitchPending(true); try { await wallet.switchChain(baseSepolia.id); if (mode === "embedded") { const nextClient = await getClientForChain({ id: baseSepolia.id }); setChainClient(nextClient ?? null); } } catch { if (mode === "embedded") setChainClient(null); setActionError("Network switching is unavailable right now."); } finally { setSwitchPending(false); } };
+  const switchNetwork = async () => { const wallet = mode === "external" ? external : embedded; if (!wallet) return; setActionError(null); setSwitchPending(true); try { await wallet.switchChain(selectedZonkChain.id); if (mode === "embedded") { const nextClient = await getClientForChain({ id: selectedZonkChain.id }); setChainClient(nextClient ?? null); } } catch { if (mode === "embedded") setChainClient(null); setActionError("Network switching is unavailable right now."); } finally { setSwitchPending(false); } };
   const runLogout = async () => { setLoginPending(false); await logoutPrivy(logout, setActionError); };
 
   const state = derivePrivyWalletState({
@@ -98,9 +97,9 @@ export function WalletStatus({ compact = false, short = false }: { compact?: boo
     {actionError && <span className={`${compact ? "w-full" : ""} text-xs text-red-300`}>{actionError}</span>}
     {!ready && <span className="text-sm text-zinc-400">Privy loading…</span>}
     {ready && error && <span className="text-sm text-red-300">Privy is unavailable</span>}
-    {ready && !error && activeChainId !== baseSepolia.id && <><span className="badge-warning">Wrong network</span><button className="button-secondary" disabled={!(mode === "external" ? external : embedded) || switchPending} onClick={() => void switchNetwork()}>{switchPending ? "Switching…" : "Use Base Sepolia"}</button></>}
+    {ready && !error && activeChainId !== selectedZonkChainId && <><span className="badge-warning">Wrong network</span><button className="button-secondary" disabled={!(mode === "external" ? external : embedded) || switchPending} onClick={() => void switchNetwork()}>{switchPending ? "Switching…" : `Use ${selectedZonkChainName}`}</button></>}
     {ready && !error && (state === "logged_in_without_embedded_wallet" || state === "embedded_wallet_creating") && <button className="button-secondary" disabled={createPending} onClick={() => void runCreateWallet()}>{createPending ? "Creating wallet…" : "Create embedded wallet"}</button>}
-    {ready && !error && activeChainId === baseSepolia.id && <span className="badge-success">Base Sepolia</span>}
+    {ready && !error && activeChainId === selectedZonkChainId && <span className="badge-success">{selectedZonkChainName}</span>}
     <button className={compact ? "button-ghost" : "button-secondary"} onClick={() => void runLogout()}>Log out</button>
   </div>;
 
@@ -125,6 +124,6 @@ export function PrivyWalletUnavailable() {
 export function NetworkGuard({ children }: { children: ReactNode }) {
   const { ready, authenticated } = usePrivy();
   const { activeChainId: chainId, mode, activeAddress } = useActiveWallet();
-  if (ready && authenticated && !isBaseSepolia(chainId)) return <div className="panel border-amber-400/40"><h2 className="text-lg font-semibold text-amber-200">Unsupported network</h2><p className="mt-2 text-sm text-zinc-300">{walletModeLabel(mode)} actions are limited to Base Sepolia.</p><p className="mt-2 break-all text-xs text-zinc-500">Active wallet: {activeAddress ?? "not connected"}</p></div>;
+  if (ready && authenticated && !isSelectedZonkChain(chainId)) return <div className="panel border-amber-400/40"><h2 className="text-lg font-semibold text-amber-200">Unsupported network</h2><p className="mt-2 text-sm text-zinc-300">{walletModeLabel(mode)} actions are limited to {selectedZonkChainName}.</p><p className="mt-2 break-all text-xs text-zinc-500">Active wallet: {activeAddress ?? "not connected"}</p></div>;
   return <>{children}</>;
 }

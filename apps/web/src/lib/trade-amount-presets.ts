@@ -1,6 +1,6 @@
 import { formatEther, formatUnits } from "viem";
 
-/** Conservative Base Sepolia gas reserve left untouched on BUY MAX. 0.001 ETH. */
+/** Conservative selected-Base-network gas reserve left untouched on BUY MAX. 0.001 ETH. */
 export const BUY_MAX_GAS_RESERVE_WEI = BigInt("1000000000000000");
 
 export type AmountPreset = "10" | "50" | "max";

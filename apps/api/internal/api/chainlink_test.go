@@ -24,7 +24,7 @@ func TestChainlinkETHUSDReaderNormalizesFreshAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if price.Price != "2500.12345678" || price.PriceDecimals != 8 || !price.UpdatedAt.Equal(now.Add(-5*time.Minute)) || price.Source != "chainlink_base_sepolia" || price.MaxAgeSeconds != 3600 {
+	if price.Price != "2500.12345678" || price.PriceDecimals != 8 || !price.UpdatedAt.Equal(now.Add(-5*time.Minute)) || price.Source != "chainlink_eth_usd" || price.MaxAgeSeconds != 3600 {
 		t.Fatalf("price=%+v", price)
 	}
 }

@@ -18,7 +18,8 @@ var v3TradeABI = mustV3TradeABI()
 var v3GraduationABI = mustV3GraduationABI()
 var uniswapV3PoolABI = mustUniswapV3PoolABI()
 
-const baseSepoliaWETH = "0x4200000000000000000000000000000000000006"
+// WETH is the canonical Base predeploy at the same address on Sepolia and Mainnet.
+const baseWETH = "0x4200000000000000000000000000000000000006"
 
 func mustUniswapV3PoolABI() abi.ABI {
 	a, err := abi.JSON(strings.NewReader(`[

@@ -1,5 +1,4 @@
 import {
-  baseSepolia,
   CURVE_ALLOCATION,
   contractAddresses,
   encodeApprove,
@@ -24,12 +23,13 @@ import type { SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
 import type { EIP1193Provider, SendTransactionModalUIOptions } from "@privy-io/react-auth";
 import { createPublicClient, createWalletClient, custom, formatEther, getAddress, http, keccak256, stringToBytes, type Address, type Hash, type Transaction, type TransactionReceipt } from "viem";
 import type { TradeRecovery } from "@/lib/transactions";
+import { selectedZonkChain, selectedZonkChainName, selectedZonkRPCURL } from "@/lib/chain";
 
 export { contractAddresses, erc20TradeAbi, feeManagerV3Abi, graduationManagerV3Abi, graduationSettlementExecutorV3Abi, permanentLPFeeVaultV3Abi, permanentLPCustodianV3Abi, zonkCurveAbi, zonkFactoryAbi };
 
 export const publicClient = createPublicClient({
-  chain: baseSepolia,
-  transport: http(process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org"),
+  chain: selectedZonkChain,
+  transport: http(selectedZonkRPCURL),
 });
 
 export async function readTokenOnchain(token: Address) {
@@ -51,7 +51,7 @@ export async function submitCreateToken(client: SmartWalletClientType, creator: 
   await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
   return sendSmartWalletTransaction(client, { calls: [{ to: factory, data: encodeCreateToken(...args) }] }, {
     action: "Create token",
-    description: `Create ${symbol} on Zonk.fun with the Privy embedded smart wallet on Base Sepolia.`,
+    description: `Create ${symbol} on Zonk.fun with the Privy embedded smart wallet on ${selectedZonkChainName}.`,
   });
 }
 
@@ -61,7 +61,7 @@ export async function submitExternalCreateToken(client: ExternalWalletClient, cr
   const salt = typeof userSalt === "string" ? userSalt : ("userSalt" in userSalt ? userSalt.userSalt : keccak256(stringToBytes(`${name}-${symbol}-${Date.now()}`)));
   const args = [name, symbol, salt] as const;
   await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
-  return client.sendTransaction({ account: creator, chain: baseSepolia, to: factory, data: encodeCreateToken(...args) });
+  return client.sendTransaction({ account: creator, chain: selectedZonkChain, to: factory, data: encodeCreateToken(...args) });
 }
 
 export async function confirmCreatedToken(hash: Hash) {
@@ -163,7 +163,7 @@ export async function submitBuy(client: SmartWalletClientType, account: Address,
   assertReady();
   return sendSmartWalletTransaction(client, { calls: [{ to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), deadline), value: quote.maxReserveIn }] }, {
     action: "Buy token",
-    description: `Buy ${quote.tokenAmount.toString()} token units with at most ${formatEther(quote.maxReserveIn)} ETH on Base Sepolia.`,
+    description: `Buy ${quote.tokenAmount.toString()} token units with at most ${formatEther(quote.maxReserveIn)} ETH on ${selectedZonkChainName}.`,
   });
 }
 
@@ -182,12 +182,12 @@ export async function submitSell(client: SmartWalletClientType, account: Address
   assertReady();
   return sendSmartWalletTransaction(client, { calls }, {
     action: allowance < quote.tokenAmount ? "Approve + sell" : "Sell token",
-    description: `Sell ${quote.tokenAmount.toString()} token units for at least ${formatEther(quote.minReserveOut)} ETH on Base Sepolia${allowance < quote.tokenAmount ? " in one atomic approval and sell batch" : ""}.`,
+    description: `Sell ${quote.tokenAmount.toString()} token units for at least ${formatEther(quote.minReserveOut)} ETH on ${selectedZonkChainName}${allowance < quote.tokenAmount ? " in one atomic approval and sell batch" : ""}.`,
   });
 }
 
 export function createExternalWalletClient(provider: EIP1193Provider, account: Address) {
-  return createWalletClient({ account, chain: baseSepolia, transport: custom(provider) });
+  return createWalletClient({ account, chain: selectedZonkChain, transport: custom(provider) });
 }
 
 export type ExternalWalletClient = ReturnType<typeof createExternalWalletClient>;
@@ -207,7 +207,7 @@ export async function submitExternalBuy(client: ExternalWalletClient, account: A
   });
   assertBuyQuoteFresh(quote);
   assertReady();
-  return client.sendTransaction({ account, chain: baseSepolia, to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), quote.deadline), value: quote.maxReserveIn });
+  return client.sendTransaction({ account, chain: selectedZonkChain, to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), quote.deadline), value: quote.maxReserveIn });
 }
 
 export async function submitExternalSell(
@@ -234,10 +234,10 @@ export async function submitExternalSell(
     assertExternalSellDeadline(quote);
     assertReady();
     callbacks.onApprovalRequested();
-    const approvalHash = await client.sendTransaction({ account, chain: baseSepolia, to: token, data: encodeApprove(curve, quote.tokenAmount) });
+    const approvalHash = await client.sendTransaction({ account, chain: selectedZonkChain, to: token, data: encodeApprove(curve, quote.tokenAmount) });
     callbacks.onApprovalSubmitted(approvalHash);
     const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approvalHash, confirmations: 1, timeout: 120_000 });
-    if (approvalReceipt.status !== "success") throw new Error("The token approval transaction reverted on Base Sepolia.");
+    if (approvalReceipt.status !== "success") throw new Error(`The token approval transaction reverted on ${selectedZonkChainName}.`);
     callbacks.onApprovalConfirmed(approvalHash);
 
     // The approval changes the exact state this flow depends on. Never carry
@@ -255,7 +255,7 @@ export async function submitExternalSell(
   assertExternalSellDeadline(quote);
   assertReady();
   callbacks.onSellRequested();
-  return client.sendTransaction({ account, chain: baseSepolia, to: curve, data: encodeSell(quote.tokenAmount, quote.minReserveOut, quote.deadline) });
+  return client.sendTransaction({ account, chain: selectedZonkChain, to: curve, data: encodeSell(quote.tokenAmount, quote.minReserveOut, quote.deadline) });
 }
 
 async function readExternalSellState(token: Address, account: Address, curve: Address) {

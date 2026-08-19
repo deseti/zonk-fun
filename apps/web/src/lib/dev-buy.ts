@@ -3,6 +3,7 @@ import type { SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
 import type { Address, Hash } from "viem";
 import { confirmTrade, createExternalWalletClient, quoteBuyByBudget, readTradeState, submitBuy, submitExternalBuy } from "@/lib/contracts";
 import { DEFAULT_BUY_SLIPPAGE_BPS, type TransactionState } from "@/lib/transactions";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 
 export class DevBuyAttemptError extends Error {
   constructor(message: string, public readonly retryable: boolean, public readonly buyHash?: Hash, public readonly rejected = false) {
@@ -18,7 +19,7 @@ export type DevBuyInput = {
   creationHash: Hash;
   walletMode: "embedded" | "external";
   externalWallet?: BaseConnectedEthereumWallet;
-  getClientForChain: (chain: { id: 84532 }) => Promise<SmartWalletClientType | null | undefined>;
+  getClientForChain: (chain: { id: number }) => Promise<SmartWalletClientType | null | undefined>;
   report: (state: TransactionState) => void;
 };
 
@@ -35,8 +36,8 @@ export async function executeDevBuy(input: DevBuyInput): Promise<Hash> {
       report({ status: "dev_buy_awaiting_wallet", hash: creationHash });
       buyHash = await submitExternalBuy(createExternalWalletClient(provider, creatorAddress), creatorAddress, tokenAddress, quote);
     } else {
-      const client = await getClientForChain({ id: 84532 });
-      if (!client) throw new Error("The Base Sepolia smart-wallet client is unavailable.");
+      const client = await getClientForChain({ id: selectedZonkChainId });
+      if (!client) throw new Error(`The ${selectedZonkChainName} smart-wallet client is unavailable.`);
       report({ status: "dev_buy_awaiting_wallet", hash: creationHash });
       buyHash = await submitBuy(client, creatorAddress, tokenAddress, quote);
     }
@@ -47,7 +48,7 @@ export async function executeDevBuy(input: DevBuyInput): Promise<Hash> {
       report({ status: "dev_buy_confirmed", hash: confirmation.hash });
       return confirmation.hash;
     }
-    if (confirmation.status === "reverted") throw new DevBuyAttemptError("The Dev buy transaction reverted on Base Sepolia.", true, confirmation.hash);
+    if (confirmation.status === "reverted") throw new DevBuyAttemptError(`The Dev buy transaction reverted on ${selectedZonkChainName}.`, true, confirmation.hash);
     throw new DevBuyAttemptError("The Dev buy transaction still needs a definitive receipt before it can be retried.", false, confirmation.hash);
   } catch (error) {
     if (error instanceof DevBuyAttemptError) throw error;

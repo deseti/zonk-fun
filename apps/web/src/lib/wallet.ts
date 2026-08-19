@@ -1,6 +1,5 @@
-import { baseSepolia, BASE_SEPOLIA_CHAIN_ID } from "@zonk/contracts-sdk";
 import type { BaseConnectedEthereumWallet, PrivyClientConfig } from "@privy-io/react-auth";
-import { isBaseSepolia } from "@/lib/chain";
+import { isSelectedZonkChain, selectedZonkChain } from "@/lib/chain";
 
 export const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ?? "";
 export const hasPrivyAppIdValue = (value: string | undefined) => Boolean(value?.trim());
@@ -47,18 +46,18 @@ export function derivePrivyWalletState(input: {
   if (!input.ready || input.loginPending) return "logging_in";
   if (!input.authenticated) return "logged_out";
   if (!input.hasEmbeddedWallet) return input.createPending ? "embedded_wallet_creating" : "logged_in_without_embedded_wallet";
-  if (!isBaseSepolia(input.chainId)) return "wrong_network";
+  if (!isSelectedZonkChain(input.chainId)) return "wrong_network";
   if (!input.hasSmartWalletAddress || !input.hasSmartWalletClient) return "embedded_wallet_creating";
   return "smart_wallet_ready";
 }
 
 export function canPrepareTransaction(chainId: number | undefined, authenticated: boolean, smartWalletReady: boolean) {
-  return authenticated && smartWalletReady && isBaseSepolia(chainId);
+  return authenticated && smartWalletReady && isSelectedZonkChain(chainId);
 }
 
 export const privyConfig: PrivyClientConfig = {
-  defaultChain: baseSepolia,
-  supportedChains: [baseSepolia],
+  defaultChain: selectedZonkChain,
+  supportedChains: [selectedZonkChain],
   loginMethods: [...privyLoginMethods],
   appearance: {
     showWalletLoginFirst: true,
@@ -71,5 +70,3 @@ export const privyConfig: PrivyClientConfig = {
     showWalletUIs: true,
   },
 };
-
-export { BASE_SEPOLIA_CHAIN_ID };

@@ -13,6 +13,7 @@ import { hasPrivyAppId, isPrivyEmbeddedWallet, parsePrivyChainId } from "@/lib/w
 import { DevBuyFailure, parseDevBuyAmount, type TransactionState } from "@/lib/transactions";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { useState } from "react";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -39,7 +40,7 @@ function PrivyCreatePage() {
   };
 
   const execute: CreateExecution = async (input, report) => {
-    if (chainId !== 84532) throw new Error(`Switch the ${mode} wallet to Base Sepolia before creating a token.`);
+    if (chainId !== selectedZonkChainId) throw new Error(`Switch the ${mode} wallet to ${selectedZonkChainName} before creating a token.`);
     if (!creator) throw new Error("Wait for the Privy smart wallet before creating a token.");
     const config = configuredCurveInitialization();
     const creatorAddress = getAddress(creator);
@@ -64,8 +65,8 @@ function PrivyCreatePage() {
       const client = createExternalWalletClient(provider, creatorAddress);
       hash = await submitExternalCreateToken(client, creatorAddress, input.name.trim(), input.symbol.trim(), config.userSalt);
     } else {
-      const client = await getClientForChain({ id: 84532 });
-      if (!client) throw new Error("The Base Sepolia smart-wallet client is unavailable.");
+      const client = await getClientForChain({ id: selectedZonkChainId });
+      if (!client) throw new Error(`The ${selectedZonkChainName} smart-wallet client is unavailable.`);
       hash = await submitCreateToken(client, creatorAddress, input.name.trim(), input.symbol.trim(), config.userSalt);
     }
     report({ status: "submitted", hash });
@@ -98,7 +99,7 @@ function PrivyCreatePage() {
       <div className="min-w-0">
         <p className="eyebrow">Token launch</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">Create your token</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:mt-4 sm:text-base sm:leading-7">Publish its identity, then confirm your Base Sepolia launch transaction{hasDevBuy ? " and optional initial buy" : ""}.</p>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:mt-4 sm:text-base sm:leading-7">Publish its identity, then confirm your {selectedZonkChainName} launch transaction{hasDevBuy ? " and optional initial buy" : ""}.</p>
         <details className="panel mt-5 lg:hidden">
           <summary className="min-h-11 cursor-pointer text-sm font-semibold text-white">What happens</summary>
           <LaunchOverview hasDevBuy={hasDevBuy} walletMode={mode} compact />
@@ -119,7 +120,7 @@ function LaunchOverview({ hasDevBuy, walletMode, compact = false }: { hasDevBuy:
       <LaunchStep number="1" title="Metadata" copy="Your image and description are uploaded as a draft." />
       <LaunchStep number="2" title="Factory transaction" copy="Your wallet creates the token and its bonding curve atomically." />
       {hasDevBuy && <LaunchStep number="3" title="Initial buy" copy={`A separate ${walletMode === "external" ? "external-wallet" : "wallet"} confirmation buys from the bonding curve.`} />}
-      <LaunchStep number={hasDevBuy ? "4" : "3"} title={hasDevBuy ? "Complete" : "Confirmation"} copy="After Base Sepolia confirms and the indexer catches up, your token page opens." />
+      <LaunchStep number={hasDevBuy ? "4" : "3"} title={hasDevBuy ? "Complete" : "Confirmation"} copy={`After ${selectedZonkChainName} confirms and the indexer catches up, your token page opens.`} />
     </ol>
     <div className={`${compact ? "mt-4" : "mt-6"} border-t border-white/8 pt-4 text-sm leading-6 text-zinc-400`}>
       <p><span className="font-medium text-zinc-200">Cost:</span> network gas{hasDevBuy ? " plus your optional Dev buy amount; each transaction is confirmed separately" : " only"}.</p>

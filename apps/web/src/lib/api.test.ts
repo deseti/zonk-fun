@@ -34,8 +34,8 @@ describe("API client", () => {
     await expect(api.listTokens("?limit=101")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
   it("parses the runtime Chainlink ETH/USD reference", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ price: "2500.12345678", price_decimals: 8, updated_at: "2026-08-15T10:00:00Z", feed: "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1", source: "chainlink_base_sepolia", max_age_seconds: 3600 }), { status: 200 })));
-    await expect(api.ethUsdPrice()).resolves.toMatchObject({ price: "2500.12345678", price_decimals: 8, source: "chainlink_base_sepolia" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ price: "2500.12345678", price_decimals: 8, updated_at: "2026-08-15T10:00:00Z", feed: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", source: "chainlink_eth_usd", max_age_seconds: 3600 }), { status: 200 })));
+    await expect(api.ethUsdPrice()).resolves.toMatchObject({ price: "2500.12345678", price_decimals: 8, source: "chainlink_eth_usd" });
   });
   it("normalizes malformed HTTP errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 500 })));

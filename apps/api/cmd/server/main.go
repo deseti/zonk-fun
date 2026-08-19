@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -24,11 +23,20 @@ func main() {
 	if databaseURL == "" {
 		panic("DATABASE_URL is required")
 	}
-	chainID := int64(84532)
-	if s := os.Getenv("BASE_SEPOLIA_CHAIN_ID"); s != "" {
-		if n, e := strconv.ParseInt(s, 10, 64); e == nil {
-			chainID = n
-		}
+	sepoliaFeed := os.Getenv("BASE_SEPOLIA_CHAINLINK_ETH_USD_FEED")
+	if sepoliaFeed == "" {
+		// Preserve the existing Sepolia-only environment variable as a compatibility alias.
+		sepoliaFeed = os.Getenv("CHAINLINK_ETH_USD_FEED")
+	}
+	chain, e := resolveAPIChainConfig(
+		os.Getenv("ZONK_CHAIN_ID"),
+		os.Getenv("BASE_SEPOLIA_RPC_URL"),
+		os.Getenv("BASE_MAINNET_RPC_URL"),
+		sepoliaFeed,
+		os.Getenv("BASE_MAINNET_CHAINLINK_ETH_USD_FEED"),
+	)
+	if e != nil {
+		panic(e)
 	}
 	requestTimeout := 5 * time.Second
 	if s := os.Getenv("API_REQUEST_TIMEOUT"); s != "" {
@@ -48,10 +56,6 @@ func main() {
 	if e != nil {
 		panic(e)
 	}
-	feed := os.Getenv("CHAINLINK_ETH_USD_FEED")
-	if feed == "" {
-		feed = api.BaseSepoliaETHUSDFeed
-	}
 	maxAge := time.Hour
 	if s := os.Getenv("CHAINLINK_ETH_USD_MAX_AGE"); s != "" {
 		parsed, err := time.ParseDuration(s)
@@ -60,13 +64,13 @@ func main() {
 		}
 		maxAge = parsed
 	}
-	priceReader, e := api.NewChainlinkETHUSDReader(os.Getenv("BASE_SEPOLIA_RPC_URL"), feed, maxAge, &http.Client{Timeout: requestTimeout})
+	priceReader, e := api.NewChainlinkETHUSDReader(chain.RPCURL, chain.Feed, maxAge, &http.Client{Timeout: requestTimeout})
 	if e != nil {
 		logger.Warn("ETH/USD oracle disabled", "error", e)
 	}
-	handler := api.NewHandlerWithDependencies(repo, chainID, requestTimeout, logger, objects, priceReader)
+	handler := api.NewHandlerWithDependencies(repo, chain.ChainID, requestTimeout, logger, objects, priceReader)
 	addr := fmt.Sprintf("%s:%s", host, port)
-	fmt.Printf("zonk-api listening on %s\n", addr)
+	fmt.Printf("zonk-api (%s) listening on %s\n", chain.Name, addr)
 
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: requestTimeout, ReadTimeout: requestTimeout, WriteTimeout: requestTimeout, IdleTimeout: requestTimeout}
 	if err := server.ListenAndServe(); err != nil {

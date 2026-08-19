@@ -26,14 +26,19 @@ func main() {
 	if mode == "" {
 		mode = "idle"
 	}
-	rpcURL := os.Getenv("BASE_SEPOLIA_RPC_URL")
+	chain, err := indexer.ResolveChainRuntime(os.Getenv("ZONK_CHAIN_ID"), os.Getenv("BASE_SEPOLIA_RPC_URL"), os.Getenv("BASE_MAINNET_RPC_URL"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zonk-indexer: %v\n", err)
+		os.Exit(1)
+	}
+	rpcURL := chain.RPCURL
 	if mode != "idle" && rpcURL == "" {
-		fmt.Fprintln(os.Stderr, "zonk-indexer: BASE_SEPOLIA_RPC_URL is required unless INDEXER_MODE=idle")
+		fmt.Fprintf(os.Stderr, "zonk-indexer: %s is required unless INDEXER_MODE=idle\n", chain.RPCEnvName)
 		os.Exit(1)
 	}
 
 	if mode == "idle" {
-		fmt.Println("zonk-indexer started in idle development mode (no RPC connection)")
+		fmt.Printf("%s started in idle development mode (no RPC connection)\n", chain.Name)
 	} else {
 		dbURL := os.Getenv("DATABASE_URL")
 		if dbURL == "" {
@@ -64,7 +69,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "zonk-indexer: %v\n", err)
 			os.Exit(1)
 		}
-		cfg := indexer.Config{RPCURL: rpcURL, DatabaseURL: dbURL, Mode: mode, ChainID: indexer.BaseSepoliaChainID, StartBlock: start, StopBlock: stopBlock, Confirmations: confirm, BatchSize: batch, Contracts: addresses}
+		cfg := indexer.Config{RPCURL: rpcURL, DatabaseURL: dbURL, Mode: mode, ChainID: chain.ChainID, IndexerName: chain.Name, StartBlock: start, StopBlock: stopBlock, Confirmations: confirm, BatchSize: batch, Contracts: addresses}
 		if err := cfg.Validate(); err != nil {
 			panic(err)
 		}
@@ -75,7 +80,7 @@ func main() {
 			}
 			stop()
 		}()
-		fmt.Printf("zonk-indexer started in %s mode\n", mode)
+		fmt.Printf("%s started in %s mode\n", chain.Name, mode)
 	}
 
 	<-ctx.Done()

@@ -84,11 +84,11 @@ func testHandler(repo Repository) http.Handler {
 func TestETHUSDPriceEndpoint(t *testing.T) {
 	repo := &fakeRepo{}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	price := ETHUSDPrice{Price: "2500.12345678", PriceDecimals: 8, UpdatedAt: time.Unix(2_000_000_000, 0).UTC(), Feed: BaseSepoliaETHUSDFeed, Source: "chainlink_base_sepolia", MaxAgeSeconds: 3600}
+	price := ETHUSDPrice{Price: "2500.12345678", PriceDecimals: 8, UpdatedAt: time.Unix(2_000_000_000, 0).UTC(), Feed: BaseSepoliaETHUSDFeed, Source: "chainlink_eth_usd", MaxAgeSeconds: 3600}
 	handler := NewHandlerWithDependencies(repo, 84532, time.Second, logger, nil, fakeETHUSDReader{price: price})
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/prices/eth-usd", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"price":"2500.12345678"`) || !strings.Contains(w.Body.String(), `"source":"chainlink_base_sepolia"`) || w.Header().Get("Cache-Control") != "no-store" {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"price":"2500.12345678"`) || !strings.Contains(w.Body.String(), `"source":"chainlink_eth_usd"`) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status=%d headers=%v body=%s", w.Code, w.Header(), w.Body.String())
 	}
 
