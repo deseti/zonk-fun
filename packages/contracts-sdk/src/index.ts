@@ -150,6 +150,23 @@ const zonkCurveSellQuoteComponents = [
 ] as const;
 
 export const zonkCurveAbi = [
+  { type: "error", name: "AlreadyGraduated", inputs: [] },
+  { type: "error", name: "DeadlineExpired", inputs: [] },
+  { type: "error", name: "DustTrade", inputs: [] },
+  { type: "error", name: "GraduationAccountingMismatch", inputs: [] },
+  { type: "error", name: "GraduationManagerInvalid", inputs: [] },
+  { type: "error", name: "InsufficientCurveInventory", inputs: [] },
+  { type: "error", name: "InsufficientReserve", inputs: [] },
+  { type: "error", name: "InvalidAmount", inputs: [] },
+  { type: "error", name: "InvalidFactory", inputs: [] },
+  { type: "error", name: "InvalidFeeManager", inputs: [] },
+  { type: "error", name: "InvalidRecipient", inputs: [] },
+  { type: "error", name: "NativeTransferFailed", inputs: [] },
+  { type: "error", name: "SlippageExceeded", inputs: [] },
+  { type: "error", name: "TokenInvalid", inputs: [] },
+  { type: "error", name: "TokenTransferFailed", inputs: [] },
+  { type: "error", name: "TradingClosed", inputs: [] },
+  { type: "error", name: "UnexpectedEther", inputs: [] },
   { type: "function", name: "factory", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "token", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "creator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },

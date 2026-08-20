@@ -119,6 +119,65 @@ func exactCurvePrice(t *testing.T, soldSupply, reserveBalance string) string {
 	return quotient.String()
 }
 
+func TestApplicationTokenExclusionHidesReplayedTokenWithoutAffectingAnotherToken(t *testing.T) {
+	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	const chain int64 = 8453
+	const excluded = "0xec2710a9df34b66b07bf96933d13b76e1d526c07"
+	const other = "0x00000000000000000000000000000000000000aa"
+	const creator = "0x00000000000000000000000000000000000000bb"
+	const blockHash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	cleanup := func() {
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM application_token_exclusions WHERE chain_id=$1 AND token_address=$2`, chain, excluded)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM tokens WHERE chain_id=$1 AND lower(token_address) IN ($2,$3)`, chain, excluded, other)
+		_, _ = repo.pool.Exec(ctx, `DELETE FROM chain_blocks WHERE chain_id=$1 AND block_hash=$2`, chain, blockHash)
+	}
+	cleanup()
+	defer cleanup()
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO chain_blocks(chain_id,block_number,block_hash,parent_hash,block_timestamp) VALUES($1,500000100,$2,'0xparent',0)`, chain, blockHash); err != nil {
+		t.Fatal(err)
+	}
+	for index, token := range []string{excluded, other} {
+		if _, err = repo.pool.Exec(ctx, `INSERT INTO tokens(chain_id,token_address,creator_address,name,symbol,initial_supply,protocol_version,block_number,block_hash,transaction_hash,log_index) VALUES($1,$2,$3,$4,$5,1000,'endpoint-cp-v3',500000100,$6,$7,$8)`, chain, token, creator, "Visible fixture", "VIS", blockHash, "0x"+strings.Repeat(string(rune('a'+index)), 64), index); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO application_token_exclusions(chain_id,token_address,reason) VALUES($1,$2,'test replay exclusion')`, chain, excluded); err != nil {
+		t.Fatal(err)
+	}
+	page, err := repo.ListTokens(ctx, chain, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range page.Items {
+		if strings.EqualFold(token.Address, excluded) {
+			t.Fatalf("excluded replayed token leaked into discovery: %+v", token)
+		}
+	}
+	foundOther := false
+	for _, token := range page.Items {
+		foundOther = foundOther || strings.EqualFold(token.Address, other)
+	}
+	if !foundOther {
+		t.Fatal("unrelated token was hidden by the narrow exclusion")
+	}
+	if _, err = repo.Token(ctx, chain, excluded); err != ErrNotFound {
+		t.Fatalf("excluded detail err=%v want ErrNotFound", err)
+	}
+	profile, err := repo.Creator(ctx, chain, creator, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.TokenCount != 1 || len(profile.Tokens) != 1 || !strings.EqualFold(profile.Tokens[0].Address, other) {
+		t.Fatalf("creator profile=%+v", profile)
+	}
+}
+
 func TestPostgresMetadataFinalizeIsIdempotentAndProjectsIntoLists(t *testing.T) {
 	url := integrationDatabaseURL(t, "API_TEST_DATABASE_URL")
 	ctx := context.Background()

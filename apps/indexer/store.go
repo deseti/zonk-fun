@@ -28,6 +28,18 @@ func (s *Store) ScanContracts(ctx context.Context, chain int64, configured []com
 		SELECT DISTINCT token_address AS address FROM tokens WHERE chain_id=$1 AND is_canonical AND token_address <> ''
 		UNION
 		SELECT DISTINCT canonical_pool_address AS address FROM curves WHERE chain_id=$1 AND is_canonical AND canonical_pool_address <> ''
+		UNION
+		SELECT DISTINCT e.decoded->>'token' AS address FROM chain_events e
+		JOIN application_token_exclusions x ON x.chain_id=e.chain_id AND x.token_address=lower(e.decoded->>'token')
+		WHERE e.chain_id=$1 AND e.is_canonical AND e.event_name='TokenLaunchedV3'
+		UNION
+		SELECT DISTINCT e.decoded->>'curve' AS address FROM chain_events e
+		JOIN application_token_exclusions x ON x.chain_id=e.chain_id AND x.token_address=lower(e.decoded->>'token')
+		WHERE e.chain_id=$1 AND e.is_canonical AND e.event_name='TokenLaunchedV3'
+		UNION
+		SELECT DISTINCT e.decoded->>'canonicalPool' AS address FROM chain_events e
+		JOIN application_token_exclusions x ON x.chain_id=e.chain_id AND x.token_address=lower(e.decoded->>'token')
+		WHERE e.chain_id=$1 AND e.is_canonical AND e.event_name='TokenLaunchedV3'
 	) known`, chain)
 	if err != nil {
 		return nil, err
@@ -62,10 +74,11 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 	}
 	var ready bool
 	e = p.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9,10]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9,10,11]
 		AND to_regclass('public.chain_events') IS NOT NULL
 		AND to_regclass('public.tokens') IS NOT NULL
-		AND to_regclass('public.curves') IS NOT NULL`).Scan(&ready)
+		AND to_regclass('public.curves') IS NOT NULL
+		AND to_regclass('public.application_token_exclusions') IS NOT NULL`).Scan(&ready)
 	if e != nil {
 		p.Close()
 		return nil, fmt.Errorf("database schema is not ready; run db/migrate.sh: %w", e)
@@ -481,10 +494,11 @@ func absoluteInt(v *big.Int) *big.Int {
 func projectUniswapV3Swap(ctx context.Context, tx pgx.Tx, chain int64, l types.Log, v map[string]any, senders map[common.Hash]common.Address) error {
 	var token string
 	var graduationBlock, graduationLog int64
-	err := tx.QueryRow(ctx, `SELECT lower(c.token_address),g.block_number,g.log_index
-		FROM curves c JOIN graduations g ON g.chain_id=c.chain_id AND lower(g.token_address)=lower(c.token_address) AND g.is_canonical
-		WHERE c.chain_id=$1 AND c.is_canonical AND lower(c.canonical_pool_address)=lower($2)
-			AND (g.block_number < $3 OR (g.block_number=$3 AND g.log_index < $4))
+		err := tx.QueryRow(ctx, `SELECT lower(c.token_address),g.block_number,g.log_index
+			FROM curves c JOIN graduations g ON g.chain_id=c.chain_id AND lower(g.token_address)=lower(c.token_address) AND g.is_canonical
+			WHERE c.chain_id=$1 AND c.is_canonical AND lower(c.canonical_pool_address)=lower($2)
+				AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=c.chain_id AND x.token_address=lower(c.token_address))
+				AND (g.block_number < $3 OR (g.block_number=$3 AND g.log_index < $4))
 		ORDER BY g.block_number DESC,g.log_index DESC LIMIT 1`, chain, l.Address.Hex(), l.BlockNumber, l.Index).Scan(&token, &graduationBlock, &graduationLog)
 	if err == pgx.ErrNoRows {
 		// The pool is either not trusted canonical state or the Swap occurred
@@ -538,6 +552,15 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 	b := l.BlockHash.Hex()
 	t := l.TxHash.Hex()
 	i := l.Index
+	if token := projectedTokenAddress(n, v); token != "" {
+		var excluded bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM application_token_exclusions WHERE chain_id=$1 AND token_address=lower($2))`, c, token).Scan(&excluded); err != nil {
+			return err
+		}
+		if excluded {
+			return nil
+		}
+	}
 	switch n {
 	case "TokenLaunchedV3":
 		m, ok := metadata[common.Address(v["token"].(common.Address)).Hex()]
@@ -600,4 +623,14 @@ func projection(ctx context.Context, tx pgx.Tx, c int64, l types.Log, n string, 
 		return e
 	}
 	return nil
+}
+
+func projectedTokenAddress(event string, values map[string]any) string {
+	if event == "UniswapV3Swap" {
+		return ""
+	}
+	if token, ok := values["token"]; ok {
+		return u(token)
+	}
+	return ""
 }

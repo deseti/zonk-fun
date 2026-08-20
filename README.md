@@ -9,8 +9,7 @@ Project foundation is under active development.
 Current development target:
 
 - modular monorepo
-- Base Sepolia first
-- Base Mainnet after security and E2E validation
+- Base Mainnet only (chain ID 8453)
 - non-custodial wallet execution
 - onchain financial state as source of truth
 
@@ -60,20 +59,14 @@ The local services are available at:
 - Redis: internal Compose network only; it is not published to the host
 
 The indexer runs in explicit idle development mode when no RPC URL is configured.
-Set `BASE_SEPOLIA_RPC_URL` in `.env` only when a local validation environment provides
-an RPC endpoint. Base Sepolia is the configured target network; no credentials are
-required for Phase 0.
+Production configuration is Base Mainnet only (chain ID `8453`) and uses the
+repository's canonical Base RPC configuration.
 
 ### Frontend wallet configuration
 
-The frontend uses Privy as its only wallet provider. Set the public
-`NEXT_PUBLIC_PRIVY_APP_ID` in `.env` to enable login and Privy Embedded Smart Wallets.
-The App ID is safe for client-side use; never put Privy authorization keys or other
-secrets in `NEXT_PUBLIC_*` variables. In the Privy Dashboard, enable the desired
-email/social login methods, Embedded Ethereum Wallets, and Smart Wallets for Base
-Sepolia (chain ID `84532`). External wallet login/connectors are not enabled by the
-frontend. Without an App ID, the frontend remains runnable and displays a clear
-configuration state, but Privy login cannot be exercised.
+The frontend uses RainbowKit, wagmi, and viem with browser-controlled injected
+wallets such as Rabby and MetaMask. The connected wallet is the only transaction
+signer. The active web chain is Base Mainnet (chain ID `8453`).
 
 Run the complete local validation suite:
 

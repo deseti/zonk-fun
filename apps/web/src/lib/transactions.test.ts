@@ -13,8 +13,8 @@ describe("transaction foundation", () => {
   });
 
   it("defines the required trade transaction state machine", () => {
-    const states: TradeTransactionStatus[] = ["idle", "preparing", "awaiting_approval", "approval_confirming", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown", "confirmed", "reverted", "replaced", "failed"];
-    expect(new Set(states).size).toBe(12);
+    const states: TradeTransactionStatus[] = ["idle", "preparing", "awaiting_approval", "approval_confirming", "approval_confirmed", "preparing_sell", "awaiting_sell_signature", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown", "confirmed", "reverted", "replaced", "rejected", "expired", "failed"];
+    expect(new Set(states).size).toBe(17);
   });
 
   it("persists and isolates pending trades by wallet and token", () => {
@@ -30,11 +30,11 @@ describe("transaction foundation", () => {
     expect(readPendingTrade(token, wallet)).toBeNull();
   });
 
-  it("only allows creation on Base Sepolia while authenticated and idle", () => {
-    expect(canCreateToken(84532, true, false)).toBe(true);
+  it("only allows creation on Base Mainnet while authenticated and idle", () => {
+    expect(canCreateToken(8453, true, false)).toBe(true);
     expect(canCreateToken(1, true, false)).toBe(false);
-    expect(canCreateToken(84532, false, false)).toBe(false);
-    expect(canCreateToken(84532, true, true)).toBe(false);
+    expect(canCreateToken(8453, false, false)).toBe(false);
+    expect(canCreateToken(8453, true, true)).toBe(false);
   });
 
   it("validates metadata and image constraints", () => {

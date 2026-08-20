@@ -6,25 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-vi.mock("@privy-io/react-auth", () => ({
-  usePrivy: () => ({ authenticated: true }),
-}));
-
-vi.mock("@privy-io/react-auth/smart-wallets", () => ({
-  useSmartWallets: () => ({ getClientForChain: vi.fn() }),
-}));
-
 vi.mock("@/providers/active-wallet-provider", () => ({
   useActiveWallet: () => ({
-    mode: "embedded",
+    connected: true,
     activeAddress: "0x0000000000000000000000000000000000000022",
-    activeChainId: 84532,
-    externalWallet: undefined,
+    activeChainId: 8453,
+    walletClient: { sendTransaction: vi.fn() },
   }),
 }));
 
 vi.mock("@/lib/uniswap-v3", () => ({
-  BASE_SEPOLIA_CHAIN_ID: 84532,
   configuredUniswapV3: () => ({ quoter: "0x1", router: "0x2", factory: "0x3" }),
   validateCanonicalPool: vi.fn().mockResolvedValue({ router: "0x0000000000000000000000000000000000000099", pool: "0x0000000000000000000000000000000000000088" }),
   quoteGraduatedSwap: vi.fn().mockResolvedValue({
@@ -56,6 +47,7 @@ vi.mock("@/lib/contracts", async (importOriginal) => {
 });
 
 import { GraduatedTokenSwap } from "./graduated-token-swap";
+import { orchestrateGraduatedSwap } from "@/lib/uniswap-v3";
 
 const source = readFileSync(resolve(process.cwd(), "src/components/graduated-token-swap.tsx"), "utf8");
 
@@ -104,5 +96,20 @@ describe("graduated swap presets", () => {
     await user.click(await screen.findByRole("button", { name: "Sell ZONK" }));
     await user.click(screen.getByRole("button", { name: "Use exact token balance" }));
     expect((screen.getByLabelText("ZONK amount") as HTMLInputElement).value).toBe("5");
+  });
+
+  it("reviews graduated swap values in the shared modal before execution", async () => {
+    const user = userEvent.setup();
+    renderSwap();
+    const amount = await screen.findByLabelText("ETH amount");
+    await user.type(amount, "0.1");
+    const review = await screen.findByRole("button", { name: "Review swap" });
+    await waitFor(() => expect((review as HTMLButtonElement).disabled).toBe(false));
+    await user.click(review);
+    expect(screen.getByRole("dialog").textContent).toContain("Base · 8453");
+    expect(screen.getByRole("dialog").textContent).toContain("0.1 ETH");
+    expect(orchestrateGraduatedSwap).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm swap" }));
+    expect(orchestrateGraduatedSwap).toHaveBeenCalledOnce();
   });
 });

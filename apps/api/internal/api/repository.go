@@ -48,11 +48,12 @@ func NewPostgresRepository(ctx context.Context, url string) (*PostgresRepository
 func (r *PostgresRepository) requireSchema(ctx context.Context) error {
 	var ready bool
 	e := r.pool.QueryRow(ctx, `SELECT
-		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9,10]
+		(SELECT array_agg(version ORDER BY version) FROM schema_migrations) = ARRAY[1,2,3,4,5,6,7,8,9,10,11]
 		AND to_regclass('public.tokens') IS NOT NULL
 		AND to_regclass('public.token_metadata_drafts') IS NOT NULL
 		AND to_regclass('public.token_holder_balances') IS NOT NULL
-		AND to_regclass('public.token_trade_buckets') IS NOT NULL`).Scan(&ready)
+			AND to_regclass('public.token_trade_buckets') IS NOT NULL
+			AND to_regclass('public.application_token_exclusions') IS NOT NULL`).Scan(&ready)
 	if e != nil {
 		return fmt.Errorf("database schema is not ready; run db/migrate.sh: %w", e)
 	}
@@ -71,7 +72,9 @@ const tokenSelect = `SELECT t.token_address,t.creator_address,t.name,t.symbol,t.
  g.phase,g.graduation_manager_address,g.token_amount,g.eth_amount,g.sold_supply,g.block_number,g.transaction_hash,g.log_index,
  le.lp_custodian_address,le.position_token_id,le.liquidity_amount,le.block_number,le.transaction_hash,le.log_index,
  g.liquidity_token_address,g.quote_amount,g.liquidity_amount,g.lock_id,g.unlock_timestamp
- FROM (SELECT DISTINCT ON (token_address) * FROM tokens WHERE chain_id=$1 AND is_canonical ORDER BY token_address,block_number DESC,log_index DESC) t
+	 FROM (SELECT DISTINCT ON (token_address) * FROM tokens WHERE chain_id=$1 AND is_canonical
+	   AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=tokens.chain_id AND x.token_address=lower(tokens.token_address))
+	   ORDER BY token_address,block_number DESC,log_index DESC) t
  LEFT JOIN LATERAL (SELECT * FROM curves c WHERE c.chain_id=$1 AND c.token_address=t.token_address AND c.is_canonical ORDER BY c.block_number DESC,c.log_index DESC LIMIT 1)c ON true
  LEFT JOIN token_metrics m ON m.chain_id=t.chain_id AND m.token_address=t.token_address
  LEFT JOIN LATERAL (SELECT tr.source FROM trades tr WHERE tr.chain_id=t.chain_id AND lower(tr.token_address)=lower(t.token_address) AND tr.is_canonical ORDER BY tr.block_number DESC,tr.transaction_index DESC,tr.log_index DESC,tr.transaction_hash DESC LIMIT 1) latest_trade ON true
@@ -413,7 +416,7 @@ func (r *PostgresRepository) Creator(ctx context.Context, chain int64, creator s
 	}
 	var count int64
 	var volume string
-	e = r.pool.QueryRow(ctx, `SELECT count(*),coalesce((SELECT sum(CASE WHEN tr.source='uniswap_v3' THEN tr.reserve_amount ELSE tr.curve_value END) FROM trades tr JOIN tokens tk ON tk.chain_id=tr.chain_id AND lower(tk.token_address)=lower(tr.token_address) AND tk.is_canonical WHERE tr.chain_id=$1 AND tr.is_canonical AND lower(tk.creator_address)=lower($2)),'0') FROM tokens WHERE chain_id=$1 AND lower(creator_address)=lower($2) AND is_canonical`, chain, creator).Scan(&count, &volume)
+	e = r.pool.QueryRow(ctx, `SELECT count(*),coalesce((SELECT sum(CASE WHEN tr.source='uniswap_v3' THEN tr.reserve_amount ELSE tr.curve_value END) FROM trades tr JOIN tokens tk ON tk.chain_id=tr.chain_id AND lower(tk.token_address)=lower(tr.token_address) AND tk.is_canonical WHERE tr.chain_id=$1 AND tr.is_canonical AND lower(tk.creator_address)=lower($2) AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=tk.chain_id AND x.token_address=lower(tk.token_address))),'0') FROM tokens tk WHERE chain_id=$1 AND lower(creator_address)=lower($2) AND is_canonical AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=tk.chain_id AND x.token_address=lower(tk.token_address))`, chain, creator).Scan(&count, &volume)
 	if e != nil {
 		return CreatorProfile{}, e
 	}
@@ -431,7 +434,7 @@ func (r *PostgresRepository) Trades(ctx context.Context, chain int64, token stri
 		where = " AND (block_number < $3 OR (block_number = $3 AND (transaction_index < $4 OR (transaction_index = $4 AND (transaction_hash < $5 OR (transaction_hash = $5 AND log_index < $6))))))"
 	}
 	args = append(args, limit+1)
-	rows, e := r.pool.Query(ctx, `SELECT token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,source,block_number,transaction_index,transaction_hash,log_index FROM trades WHERE chain_id=$1 AND lower(token_address)=lower($2) AND is_canonical`+where+` ORDER BY block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC LIMIT $`+strconv.Itoa(len(args)), args...)
+	rows, e := r.pool.Query(ctx, `SELECT token_address,trader_address,side,token_amount,reserve_amount,curve_value,protocol_fee,creator_fee,source,block_number,transaction_index,transaction_hash,log_index FROM trades WHERE chain_id=$1 AND lower(token_address)=lower($2) AND is_canonical AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=trades.chain_id AND x.token_address=lower(trades.token_address))`+where+` ORDER BY block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if e != nil {
 		return TradePage{}, e
 	}
@@ -467,7 +470,7 @@ func (r *PostgresRepository) Activity(ctx context.Context, chain int64, token st
 		where = " AND (block_number < $3 OR (block_number = $3 AND (transaction_index < $4 OR (transaction_index = $4 AND (transaction_hash < $5 OR (transaction_hash = $5 AND log_index < $6))))))"
 	}
 	args = append(args, limit+1)
-	rows, e := r.pool.Query(ctx, `SELECT event_name,decoded,block_number,transaction_index,transaction_hash,log_index FROM chain_events WHERE chain_id=$1 AND is_canonical AND (lower(decoded->>'token')=lower($2) OR (event_name='Transfer' AND lower(contract_address)=lower($2)))`+where+` ORDER BY block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC LIMIT $`+strconv.Itoa(len(args)), args...)
+	rows, e := r.pool.Query(ctx, `SELECT event_name,decoded,block_number,transaction_index,transaction_hash,log_index FROM chain_events WHERE chain_id=$1 AND is_canonical AND (lower(decoded->>'token')=lower($2) OR (event_name='Transfer' AND lower(contract_address)=lower($2))) AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=chain_events.chain_id AND x.token_address=lower($2))`+where+` ORDER BY block_number DESC,transaction_index DESC,log_index DESC,transaction_hash DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if e != nil {
 		return ActivityPage{}, e
 	}
@@ -530,7 +533,8 @@ func (r *PostgresRepository) Chart(ctx context.Context, chain int64, token, inte
 			sum(CASE WHEN t.source='curve' AND t.side='buy' THEN t.curve_value WHEN t.source='curve' AND t.side='sell' THEN -t.curve_value ELSE 0 END) OVER (ORDER BY t.block_number,t.transaction_index,t.log_index,t.transaction_hash) reserve_balance
 		FROM trades t
 		JOIN chain_blocks b ON b.chain_id=t.chain_id AND b.block_hash=t.block_hash AND b.is_canonical
-		WHERE t.chain_id=$1 AND lower(t.token_address)=lower($2) AND t.is_canonical
+			WHERE t.chain_id=$1 AND lower(t.token_address)=lower($2) AND t.is_canonical
+			  AND NOT EXISTS (SELECT 1 FROM application_token_exclusions x WHERE x.chain_id=t.chain_id AND x.token_address=lower(t.token_address))
 	), priced AS (
 		SELECT *,CASE WHEN source='uniswap_v3' THEN floor(reserve_amount * 1000000000000000000::numeric / NULLIF(token_amount,0))
 			WHEN sold_supply >= 0 AND sold_supply < 1066666666666666666666666667::numeric AND reserve_balance >= 0

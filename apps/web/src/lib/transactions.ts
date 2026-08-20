@@ -101,6 +101,9 @@ export type TradeTransactionStatus =
   | "preparing"
   | "awaiting_approval"
   | "approval_confirming"
+  | "approval_confirmed"
+  | "preparing_sell"
+  | "awaiting_sell_signature"
   | "awaiting_wallet"
   | "submitted"
   | "confirming"
@@ -108,6 +111,8 @@ export type TradeTransactionStatus =
   | "confirmed"
   | "reverted"
   | "replaced"
+  | "rejected"
+  | "expired"
   | "failed";
 
 export type TradeSide = "buy" | "sell";

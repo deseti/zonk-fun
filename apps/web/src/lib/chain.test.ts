@@ -10,7 +10,7 @@ describe("chain guard", () => {
   it("recognizes only the configured Zonk chain", () => {
     expect(BASE_SEPOLIA_CHAIN_ID).toBe(84532);
     expect(isSelectedZonkChain(selectedZonkChainId)).toBe(true);
-    expect(isSelectedZonkChain(selectedZonkChainId === 84532 ? 8453 : 84532)).toBe(false);
+    expect(isSelectedZonkChain(84532)).toBe(false);
     expect(isSelectedZonkChain(undefined)).toBe(false);
   });
   it("resolves exactly the two supported Zonk chains", () => {

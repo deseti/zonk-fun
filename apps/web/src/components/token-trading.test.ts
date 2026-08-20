@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as contracts from "@/lib/contracts";
-import { activeTradeStateQueryKey, loadActiveTradeState, selectActiveSigner, TokenTrading, tradeInvalidationKeys } from "./token-trading";
+import { activeTradeStateQueryKey, loadActiveTradeState, TokenTrading, tradeInvalidationKeys } from "./token-trading";
 
 vi.mock("@/components/graduated-token-swap", () => ({ GraduatedTokenSwap: () => "Swap terminal" }));
 
@@ -32,15 +32,6 @@ describe("trade query refresh", () => {
     expect(activeTradeStateQueryKey(token, external)).toEqual(["trade-state", token, external]);
     await expect(loadActiveTradeState(token, external)).resolves.toBe(state);
     expect(read).toHaveBeenCalledWith(token, external);
-  });
-
-  it("keeps embedded and external signer selection separate without fallback", () => {
-    const embedded = { sendTransaction: vi.fn() } as never;
-    const external = { address: "0x0000000000000000000000000000000000000022", getEthereumProvider: vi.fn() } as never;
-    expect(selectActiveSigner("embedded", { embedded, external })).toEqual({ mode: "embedded", client: embedded });
-    expect(selectActiveSigner("external", { embedded, external })).toEqual({ mode: "external", wallet: external });
-    expect(() => selectActiveSigner("external", { embedded })).toThrow(/selected external wallet is unavailable/i);
-    expect(() => selectActiveSigner("embedded", { external })).toThrow(/embedded smart-wallet client is unavailable/i);
   });
 
   it("renders the isolated V3 swap terminal for graduated tokens", () => {

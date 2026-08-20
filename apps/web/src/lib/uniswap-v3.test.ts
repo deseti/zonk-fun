@@ -1,17 +1,17 @@
 import { decodeFunctionData, getAddress } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BASE_MAINNET_QUOTER_V2, BASE_MAINNET_SWAP_ROUTER_02, BASE_MAINNET_V3_FACTORY, BASE_MAINNET_WETH, BASE_SEPOLIA_SWAP_ROUTER_02, BASE_SEPOLIA_V3_FACTORY, BASE_SEPOLIA_WETH, BASE_SEPOLIA_QUOTER_V2, CANONICAL_POOL_FEE, CONTRACT_BALANCE, approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, minimumOutput, orchestrateGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, swapRouter02Abi, validateCanonicalPool, waitForGraduatedAllowance, type GraduatedQuote, type GraduatedExecutionState, type ValidatedPool } from "./uniswap-v3";
+import { BASE_MAINNET_QUOTER_V2, BASE_MAINNET_SWAP_ROUTER_02, BASE_MAINNET_V3_FACTORY, BASE_MAINNET_WETH, CANONICAL_POOL_FEE, CONTRACT_BALANCE, approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, minimumOutput, orchestrateGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, swapRouter02Abi, validateCanonicalPool, waitForGraduatedAllowance, type GraduatedQuote, type GraduatedExecutionState, type ValidatedPool } from "./uniswap-v3";
 import { erc20TradeAbi, publicClient } from "@/lib/contracts";
 
 const token = "0x0000000000000000000000000000000000000011" as const;
 const wallet = "0x0000000000000000000000000000000000000022" as const;
-const pool: ValidatedPool = { pool: "0x0000000000000000000000000000000000000033", token, token0: BASE_SEPOLIA_WETH, token1: token, quoter: "0x0000000000000000000000000000000000000044", router: "0x0000000000000000000000000000000000000055", factory: "0x0000000000000000000000000000000000000066" };
-const quote = (side: "buy" | "sell"): GraduatedQuote => ({ side, amountIn: BigInt(1000), amountOut: BigInt(900), minimumOut: BigInt(895), slippageBps: 50, createdAt: 1_000, deadline: BigInt(2_000), pool: pool.pool, wallet, chainId: 84532 });
+const pool: ValidatedPool = { pool: "0x0000000000000000000000000000000000000033", token, token0: BASE_MAINNET_WETH, token1: token, quoter: "0x0000000000000000000000000000000000000044", router: "0x0000000000000000000000000000000000000055", factory: "0x0000000000000000000000000000000000000066" };
+const quote = (side: "buy" | "sell"): GraduatedQuote => ({ side, amountIn: BigInt(1000), amountOut: BigInt(900), minimumOut: BigInt(895), slippageBps: 50, createdAt: 1_000, deadline: BigInt(2_000), pool: pool.pool, wallet, chainId: 8453 });
 
 describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    for (const key of ["NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2", "NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02", "NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_FACTORY"]) delete process.env[key];
+    for (const key of ["NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2", "NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02", "NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY"]) delete process.env[key];
   });
 
   it("uses the official SwapRouter02 CONTRACT_BALANCE sentinel", () => {
@@ -31,11 +31,11 @@ describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
     expect(() => minimumOutput(BigInt(0), 50)).toThrow(/output/i);
   });
   it("rejects stale, wallet-changed, chain-changed, and pool-changed quote contexts", () => {
-    expect(quoteIsFresh(quote("buy"), wallet, pool.pool, 84532, 1_500)).toBe(true);
+    expect(quoteIsFresh(quote("buy"), wallet, pool.pool, 8453, 1_500)).toBe(true);
     expect(quoteIsFresh(quote("buy"), wallet, pool.pool, 1, 1_500)).toBe(false);
-    expect(quoteIsFresh(quote("buy"), "0x0000000000000000000000000000000000000023", pool.pool, 84532, 1_500)).toBe(false);
-    expect(quoteIsFresh(quote("buy"), wallet, "0x0000000000000000000000000000000000000034", 84532, 1_500)).toBe(false);
-    expect(quoteIsFresh(quote("buy"), wallet, pool.pool, 84532, 62_000)).toBe(false);
+    expect(quoteIsFresh(quote("buy"), "0x0000000000000000000000000000000000000023", pool.pool, 8453, 1_500)).toBe(false);
+    expect(quoteIsFresh(quote("buy"), wallet, "0x0000000000000000000000000000000000000034", 8453, 1_500)).toBe(false);
+    expect(quoteIsFresh(quote("buy"), wallet, pool.pool, 8453, 62_000)).toBe(false);
   });
   it("encodes the SwapRouter02 buy payload with explicit wrap then swap", () => {
     const transaction = buildGraduatedSwapTransaction(pool, quote("buy"), wallet);
@@ -49,7 +49,7 @@ describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
     expect(wrap.functionName).toBe("wrapETH");
     expect(wrap.args).toEqual([BigInt(1000)]);
     const params = swap.args?.[0] as { tokenIn: string; tokenOut: string; fee: number; recipient: string; amountIn: bigint };
-    expect(getAddress(params.tokenIn)).toBe(BASE_SEPOLIA_WETH);
+    expect(getAddress(params.tokenIn)).toBe(BASE_MAINNET_WETH);
     expect(getAddress(params.tokenOut)).toBe(token);
     expect(params.fee).toBe(CANONICAL_POOL_FEE);
     expect(getAddress(params.recipient)).toBe(wallet);
@@ -66,7 +66,7 @@ describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
     const params = swap.args?.[0] as { tokenIn: string; tokenOut: string; recipient: string; amountIn: bigint; fee: number };
     expect(swap.functionName).toBe("exactInputSingle");
     expect(getAddress(params.tokenIn)).toBe(token);
-    expect(getAddress(params.tokenOut)).toBe(BASE_SEPOLIA_WETH);
+    expect(getAddress(params.tokenOut)).toBe(BASE_MAINNET_WETH);
     expect(getAddress(params.recipient)).toBe(pool.router);
     expect(params.amountIn).toBe(BigInt(1000));
     expect(params.amountIn).not.toBe(CONTRACT_BALANCE);
@@ -88,31 +88,31 @@ describe("graduated Uniswap V3 SwapRouter02 guardrails", () => {
   });
 
   it("fails closed when any periphery address is missing", () => {
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2 = BASE_SEPOLIA_QUOTER_V2;
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02 = BASE_SEPOLIA_SWAP_ROUTER_02;
+    process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2 = BASE_MAINNET_QUOTER_V2;
+    process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02 = BASE_MAINNET_SWAP_ROUTER_02;
     expect(configuredUniswapV3()).toBeUndefined();
   });
 
   async function expectPoolValidationFailure(overrides: Record<string, unknown>, message: RegExp) {
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2 = BASE_SEPOLIA_QUOTER_V2;
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02 = BASE_SEPOLIA_SWAP_ROUTER_02;
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_FACTORY = BASE_SEPOLIA_V3_FACTORY;
+    process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2 = BASE_MAINNET_QUOTER_V2;
+    process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02 = BASE_MAINNET_SWAP_ROUTER_02;
+    process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY = BASE_MAINNET_V3_FACTORY;
     vi.spyOn(publicClient, "getBytecode").mockResolvedValue("0x6000" as never);
     const values: Record<string, unknown> = {
-      token0: BASE_SEPOLIA_WETH,
+      token0: BASE_MAINNET_WETH,
       token1: token,
       fee: CANONICAL_POOL_FEE,
-      factory: BASE_SEPOLIA_V3_FACTORY,
-      quoterFactory: BASE_SEPOLIA_V3_FACTORY,
-      routerFactory: BASE_SEPOLIA_V3_FACTORY,
-      quoterWeth: BASE_SEPOLIA_WETH,
-      routerWeth: BASE_SEPOLIA_WETH,
+      factory: BASE_MAINNET_V3_FACTORY,
+      quoterFactory: BASE_MAINNET_V3_FACTORY,
+      routerFactory: BASE_MAINNET_V3_FACTORY,
+      quoterWeth: BASE_MAINNET_WETH,
+      routerWeth: BASE_MAINNET_WETH,
       ...overrides,
     };
     vi.spyOn(publicClient, "readContract").mockImplementation(async (input: unknown) => {
       const request = input as { address: string; functionName: string };
-      if (request.functionName === "factory") return (request.address.toLowerCase() === pool.pool.toLowerCase() ? values.factory : request.address.toLowerCase() === BASE_SEPOLIA_QUOTER_V2.toLowerCase() ? values.quoterFactory : values.routerFactory) as never;
-      if (request.functionName === "WETH9") return (request.address.toLowerCase() === BASE_SEPOLIA_QUOTER_V2.toLowerCase() ? values.quoterWeth : values.routerWeth) as never;
+      if (request.functionName === "factory") return (request.address.toLowerCase() === pool.pool.toLowerCase() ? values.factory : request.address.toLowerCase() === BASE_MAINNET_QUOTER_V2.toLowerCase() ? values.quoterFactory : values.routerFactory) as never;
+      if (request.functionName === "WETH9") return (request.address.toLowerCase() === BASE_MAINNET_QUOTER_V2.toLowerCase() ? values.quoterWeth : values.routerWeth) as never;
       return values[request.functionName] as never;
     });
     await expect(validateCanonicalPool(pool.pool, token)).rejects.toThrow(message);

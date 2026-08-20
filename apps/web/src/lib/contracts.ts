@@ -2,8 +2,6 @@ import {
   CURVE_ALLOCATION,
   contractAddresses,
   encodeApprove,
-  encodeBuy,
-  encodeCreateToken,
   encodeSell,
   erc20TradeAbi,
   feeManagerV3Abi,
@@ -19,9 +17,7 @@ import {
   type BuyQuote,
   type SellQuote,
 } from "@zonk/contracts-sdk";
-import type { SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
-import type { EIP1193Provider, SendTransactionModalUIOptions } from "@privy-io/react-auth";
-import { createPublicClient, createWalletClient, custom, formatEther, getAddress, http, keccak256, stringToBytes, type Address, type Hash, type Transaction, type TransactionReceipt } from "viem";
+import { createPublicClient, getAddress, http, keccak256, stringToBytes, type Address, type Hash, type Transaction, type TransactionReceipt, type WalletClient } from "viem";
 import type { TradeRecovery } from "@/lib/transactions";
 import { selectedZonkChain, selectedZonkChainName, selectedZonkRPCURL } from "@/lib/chain";
 
@@ -43,25 +39,15 @@ export async function readCurveOnchain(token: Address) {
   return publicClient.readContract({ address: curve, abi: zonkCurveAbi, functionName: "token" });
 }
 
-export async function submitCreateToken(client: SmartWalletClientType, creator: Address, name: string, symbol: string, userSalt: `0x${string}` | CurveInitialization | { startingPrice: bigint; slope: bigint; graduationThreshold: bigint }) {
-  const factory = contractAddresses.zonkFactory;
-  if (!factory) throw new Error("Factory address is not configured.");
-  const salt = typeof userSalt === "string" ? userSalt : ("userSalt" in userSalt ? userSalt.userSalt : keccak256(stringToBytes(`${name}-${symbol}-${Date.now()}`)));
-  const args = [name, symbol, salt] as const;
-  await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
-  return sendSmartWalletTransaction(client, { calls: [{ to: factory, data: encodeCreateToken(...args) }] }, {
-    action: "Create token",
-    description: `Create ${symbol} on Zonk.fun with the Privy embedded smart wallet on ${selectedZonkChainName}.`,
-  });
-}
+export type BrowserWalletClient = WalletClient;
 
-export async function submitExternalCreateToken(client: ExternalWalletClient, creator: Address, name: string, symbol: string, userSalt: `0x${string}` | CurveInitialization | { startingPrice: bigint; slope: bigint; graduationThreshold: bigint }) {
+export async function submitCreateToken(client: BrowserWalletClient, creator: Address, name: string, symbol: string, userSalt: `0x${string}` | CurveInitialization | { startingPrice: bigint; slope: bigint; graduationThreshold: bigint }) {
   const factory = contractAddresses.zonkFactory;
   if (!factory) throw new Error("Factory address is not configured.");
   const salt = typeof userSalt === "string" ? userSalt : ("userSalt" in userSalt ? userSalt.userSalt : keccak256(stringToBytes(`${name}-${symbol}-${Date.now()}`)));
   const args = [name, symbol, salt] as const;
-  await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
-  return client.sendTransaction({ account: creator, chain: selectedZonkChain, to: factory, data: encodeCreateToken(...args) });
+  const { request } = await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
+  return client.writeContract(request);
 }
 
 export async function confirmCreatedToken(hash: Hash) {
@@ -83,16 +69,16 @@ export type CurveTradeState = {
   decimals: number;
 };
 
-export async function readTradeState(token: Address, account: Address): Promise<CurveTradeState> {
+export async function readTradeState(token: Address, account?: Address): Promise<CurveTradeState> {
   const curveAddress = await resolveCurveAddress(token);
   if (!curveAddress) throw new Error("Curve address is not configured for this token.");
   const [soldSupply, activeEthReserve, graduated, nativeBalance, tokenBalance, allowance, decimals] = await Promise.all([
     publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "soldSupply" }),
     publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "activeEthReserve" }),
     publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "graduated" }),
-    publicClient.getBalance({ address: account }),
-    publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "balanceOf", args: [account] }),
-    publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "allowance", args: [account, curveAddress] }),
+    account ? publicClient.getBalance({ address: account }) : Promise.resolve(BigInt(0)),
+    account ? publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "balanceOf", args: [account] }) : Promise.resolve(BigInt(0)),
+    account ? publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "allowance", args: [account, curveAddress] }) : Promise.resolve(BigInt(0)),
     publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "decimals" }),
   ]);
   return {
@@ -109,20 +95,31 @@ export async function readTradeState(token: Address, account: Address): Promise<
 }
 
 export async function readCurveAvailability(token: Address) {
-  const curveAddress = await resolveCurveAddress(token);
-  if (!curveAddress) return null;
   try {
+    const chainId = await publicClient.getChainId();
+    if (chainId !== selectedZonkChain.id) throw new Error(`RPC returned chain ID ${chainId}; expected Base Mainnet (${selectedZonkChain.id}).`);
+    const factoryAddress = contractAddresses.zonkFactory;
+    if (!factoryAddress) throw new Error("NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS is missing or invalid.");
+    const factoryCode = await publicClient.getBytecode({ address: factoryAddress });
+    if (!factoryCode || factoryCode === "0x") throw new Error(`No factory bytecode exists at ${factoryAddress} on Base Mainnet.`);
+    const curveAddress = await resolveCurveAddress(token);
+    if (!curveAddress) return null;
+    const curveCode = await publicClient.getBytecode({ address: curveAddress });
+    if (!curveCode || curveCode === "0x") throw new Error(`Factory resolved ${curveAddress}, but no curve bytecode exists there on Base Mainnet.`);
     const [factory, curveToken, creator, graduated] = await Promise.all([
       publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "factory" }),
       publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "token" }),
       publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "creator" }),
       publicClient.readContract({ address: curveAddress, abi: zonkCurveAbi, functionName: "graduated" }),
     ]);
-    if (!contractAddresses.zonkFactory || getAddress(factory) !== getAddress(contractAddresses.zonkFactory) || getAddress(curveToken) !== getAddress(token)) throw new Error("Configured curve is not linked to the configured factory and token.");
+    if (getAddress(factory) !== getAddress(factoryAddress)) throw new Error(`Curve factory() returned ${factory}; expected ${factoryAddress}. The ABI or deployment is incompatible.`);
+    if (getAddress(curveToken) !== getAddress(token)) throw new Error(`Curve token() returned ${curveToken}; expected ${token}. The registry entry is inconsistent.`);
     return { address: curveAddress, state: { graduated, creator } };
   } catch (error) {
     if (isCurveNotFound(error)) return null;
-    throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("Base Mainnet curve read failed", { chainId: selectedZonkChain.id, factory: contractAddresses.zonkFactory, token, detail });
+    throw new Error(`Base Mainnet curve read failed for token ${token}: ${detail}`, { cause: error });
   }
 }
 
@@ -145,13 +142,15 @@ export async function quoteSellAmount(token: Address, tokenAmount: bigint, slipp
   return { ...quote, tokenAmount, minReserveOut: minOutputWithSlippage(quote.reserveOut, slippageBps), slippageBps, deadline: transactionDeadline() };
 }
 
-export async function submitBuy(client: SmartWalletClientType, account: Address, token: Address, quote: BudgetBuyQuote, assertReady: () => void = () => undefined): Promise<Hash> {
+export async function submitBuy(client: BrowserWalletClient, account: Address, token: Address, quote: BudgetBuyQuote, assertReady: () => void = () => undefined): Promise<Hash> {
   const curve = await resolveCurveAddress(token);
   if (!curve) throw new Error("Curve address is not configured for this token.");
   const deadline = quote.deadline;
   assertBuyQuoteFresh(quote);
   assertReady();
-  await publicClient.simulateContract({
+  const nativeBalance = await publicClient.getBalance({ address: account });
+  if (nativeBalance < quote.maxReserveIn) throw new Error("The connected wallet has insufficient ETH for this buy.");
+  const { request } = await publicClient.simulateContract({
     address: curve,
     abi: zonkCurveAbi,
     functionName: "buy",
@@ -161,57 +160,11 @@ export async function submitBuy(client: SmartWalletClientType, account: Address,
   });
   assertBuyQuoteFresh(quote);
   assertReady();
-  return sendSmartWalletTransaction(client, { calls: [{ to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), deadline), value: quote.maxReserveIn }] }, {
-    action: "Buy token",
-    description: `Buy ${quote.tokenAmount.toString()} token units with at most ${formatEther(quote.maxReserveIn)} ETH on ${selectedZonkChainName}.`,
-  });
+  return client.writeContract(request);
 }
 
-export async function submitSell(client: SmartWalletClientType, account: Address, token: Address, quote: ProtectedSellQuote, allowance: bigint, assertReady: () => void = () => undefined): Promise<Hash> {
-  const curve = await resolveCurveAddress(token);
-  if (!curve) throw new Error("Curve address is not configured for this token.");
-  const deadline = quote.deadline;
-  assertReady();
-  if (allowance < quote.tokenAmount) {
-    // A standalone sell simulation would fail before the approval in this
-    // atomic smart-wallet batch has executed.
-  } else {
-    await publicClient.simulateContract({ address: curve, abi: zonkCurveAbi, functionName: "sell", args: [quote.tokenAmount, quote.minReserveOut, deadline], account });
-  }
-  const calls = buildSellCalls(token, curve, quote, allowance, deadline);
-  assertReady();
-  return sendSmartWalletTransaction(client, { calls }, {
-    action: allowance < quote.tokenAmount ? "Approve + sell" : "Sell token",
-    description: `Sell ${quote.tokenAmount.toString()} token units for at least ${formatEther(quote.minReserveOut)} ETH on ${selectedZonkChainName}${allowance < quote.tokenAmount ? " in one atomic approval and sell batch" : ""}.`,
-  });
-}
-
-export function createExternalWalletClient(provider: EIP1193Provider, account: Address) {
-  return createWalletClient({ account, chain: selectedZonkChain, transport: custom(provider) });
-}
-
-export type ExternalWalletClient = ReturnType<typeof createExternalWalletClient>;
-
-export async function submitExternalBuy(client: ExternalWalletClient, account: Address, token: Address, quote: BudgetBuyQuote, assertReady: () => void = () => undefined): Promise<Hash> {
-  const curve = await resolveCurveAddress(token);
-  if (!curve) throw new Error("Curve address is not configured for this token.");
-  assertBuyQuoteFresh(quote);
-  assertReady();
-  await publicClient.simulateContract({
-    address: curve,
-    abi: zonkCurveAbi,
-    functionName: "buy",
-    args: [minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), quote.deadline],
-    account,
-    value: quote.maxReserveIn,
-  });
-  assertBuyQuoteFresh(quote);
-  assertReady();
-  return client.sendTransaction({ account, chain: selectedZonkChain, to: curve, data: encodeBuy(minOutputWithSlippage(quote.tokenAmount, quote.slippageBps), quote.deadline), value: quote.maxReserveIn });
-}
-
-export async function submitExternalSell(
-  client: ExternalWalletClient,
+export async function submitSell(
+  client: BrowserWalletClient,
   account: Address,
   token: Address,
   quote: ProtectedSellQuote,
@@ -219,22 +172,24 @@ export async function submitExternalSell(
     onApprovalRequested: () => void;
     onApprovalSubmitted: (hash: Hash) => void;
     onApprovalConfirmed: (hash: Hash) => void;
+    onSellPreparing?: () => void;
     onSellRequested: () => void;
   },
   assertReady: () => void = () => undefined,
 ): Promise<Hash> {
   const curve = await resolveCurveAddress(token);
   if (!curve) throw new Error("Curve address is not configured for this token.");
-  assertExternalSellDeadline(quote);
+  assertSellDeadline(quote);
   assertReady();
-  let state = await readExternalSellState(token, account, curve);
-  if (state.tokenBalance < quote.tokenAmount) throw new Error("The active external wallet no longer has enough tokens for this sell.");
+  let state = await readBrowserSellState(token, account, curve);
+  if (state.tokenBalance < quote.tokenAmount) throw new Error("The connected wallet has insufficient token balance for this sell.");
 
   if (state.allowance < quote.tokenAmount) {
-    assertExternalSellDeadline(quote);
+    assertSellDeadline(quote);
     assertReady();
     callbacks.onApprovalRequested();
-    const approvalHash = await client.sendTransaction({ account, chain: selectedZonkChain, to: token, data: encodeApprove(curve, quote.tokenAmount) });
+    const { request: approvalRequest } = await publicClient.simulateContract({ address: token, abi: erc20TradeAbi, functionName: "approve", args: [curve, quote.tokenAmount], account });
+    const approvalHash = await client.writeContract(approvalRequest);
     callbacks.onApprovalSubmitted(approvalHash);
     const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approvalHash, confirmations: 1, timeout: 120_000 });
     if (approvalReceipt.status !== "success") throw new Error(`The token approval transaction reverted on ${selectedZonkChainName}.`);
@@ -242,23 +197,24 @@ export async function submitExternalSell(
 
     // The approval changes the exact state this flow depends on. Never carry
     // the pre-approval allowance snapshot into sell preparation.
-    assertExternalSellDeadline(quote);
+    assertSellDeadline(quote);
     assertReady();
-    state = await waitForExternalAllowance(token, account, curve, quote.tokenAmount);
+    state = await waitForBrowserAllowance(token, account, curve, quote.tokenAmount);
   }
 
   if (state.allowance < quote.tokenAmount) throw new Error("The confirmed token approval is still insufficient for this sell.");
-  if (state.tokenBalance < quote.tokenAmount) throw new Error("The active external wallet no longer has enough tokens for this sell.");
-  assertExternalSellDeadline(quote);
+  if (state.tokenBalance < quote.tokenAmount) throw new Error("The connected wallet has insufficient token balance for this sell.");
+  assertSellDeadline(quote);
   assertReady();
-  await publicClient.simulateContract({ address: curve, abi: zonkCurveAbi, functionName: "sell", args: [quote.tokenAmount, quote.minReserveOut, quote.deadline], account });
-  assertExternalSellDeadline(quote);
+  callbacks.onSellPreparing?.();
+  const { request } = await publicClient.simulateContract({ address: curve, abi: zonkCurveAbi, functionName: "sell", args: [quote.tokenAmount, quote.minReserveOut, quote.deadline], account });
+  assertSellDeadline(quote);
   assertReady();
   callbacks.onSellRequested();
-  return client.sendTransaction({ account, chain: selectedZonkChain, to: curve, data: encodeSell(quote.tokenAmount, quote.minReserveOut, quote.deadline) });
+  return client.writeContract(request);
 }
 
-async function readExternalSellState(token: Address, account: Address, curve: Address) {
+async function readBrowserSellState(token: Address, account: Address, curve: Address) {
   const [allowance, tokenBalance] = await Promise.all([
     publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "allowance", args: [account, curve] }),
     publicClient.readContract({ address: token, abi: erc20TradeAbi, functionName: "balanceOf", args: [account] }),
@@ -266,14 +222,14 @@ async function readExternalSellState(token: Address, account: Address, curve: Ad
   return { allowance, tokenBalance };
 }
 
-const externalAllowancePollDelays = [0, 250, 500, 1000, 1500] as const;
+const browserAllowancePollDelays = [0, 250, 500, 1000, 1500] as const;
 
-async function waitForExternalAllowance(token: Address, account: Address, curve: Address, required: bigint) {
+async function waitForBrowserAllowance(token: Address, account: Address, curve: Address, required: bigint) {
   let lastError: unknown;
-  for (let attempt = 0; attempt < externalAllowancePollDelays.length; attempt++) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, externalAllowancePollDelays[attempt]));
+  for (let attempt = 0; attempt < browserAllowancePollDelays.length; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, browserAllowancePollDelays[attempt]));
     try {
-      const state = await readExternalSellState(token, account, curve);
+      const state = await readBrowserSellState(token, account, curve);
       if (state.allowance >= required) return state;
     } catch (error) {
       lastError = error;
@@ -283,7 +239,7 @@ async function waitForExternalAllowance(token: Address, account: Address, curve:
   throw new Error("The confirmed token approval is still insufficient for this sell.");
 }
 
-function assertExternalSellDeadline(quote: ProtectedSellQuote) {
+function assertSellDeadline(quote: ProtectedSellQuote) {
   if (BigInt(Math.floor(Date.now() / 1000)) >= quote.deadline) {
     throw new Error("This quote expired during wallet approval. Request a fresh quote before selling.");
   }
@@ -291,28 +247,6 @@ function assertExternalSellDeadline(quote: ProtectedSellQuote) {
 
 export function assertBuyQuoteFresh(quote: Pick<BudgetBuyQuote, "deadline">) {
   if (BigInt(Math.floor(Date.now() / 1000)) >= quote.deadline) throw new Error("This quote expired. Request a fresh quote before buying.");
-}
-
-export function privyTransactionUiOptions(input: { action: string; description: string }): SendTransactionModalUIOptions {
-  return {
-    showWalletUIs: true,
-    isCancellable: true,
-    description: input.description,
-    buttonText: "Authorize transaction",
-    transactionInfo: {
-      title: "Zonk.fun transaction",
-      action: input.action,
-      contractInfo: { name: "Zonk.fun" },
-    },
-  };
-}
-
-export function sendSmartWalletTransaction(
-  client: SmartWalletClientType,
-  input: Parameters<SmartWalletClientType["sendTransaction"]>[0],
-  ui: { action: string; description: string },
-) {
-  return client.sendTransaction(input, { uiOptions: privyTransactionUiOptions(ui) });
 }
 
 export type TradeConfirmation = {
@@ -378,9 +312,12 @@ export async function checkTrade(hash: Hash, side: "buy" | "sell", token: Addres
   return { status: "pending", hash, recovery: result.recovery };
 }
 
-function resolveTradeReceipt(receipt: TransactionReceipt, curve: Address, side: "buy" | "sell", token: Address, trader: Address, replacementReason?: TradeConfirmation["replacementReason"]): TradeConfirmation {
+async function resolveTradeReceipt(receipt: TransactionReceipt, curve: Address, side: "buy" | "sell", token: Address, trader: Address, replacementReason?: TradeConfirmation["replacementReason"]): Promise<TradeConfirmation> {
   if (replacementReason) return { status: "replaced", hash: receipt.transactionHash, replacementReason };
   if (receipt.status === "reverted") return { status: "reverted", hash: receipt.transactionHash };
+  const transaction = await publicClient.getTransaction({ hash: receipt.transactionHash });
+  if (getAddress(transaction.from) !== getAddress(trader)) throw new Error("Confirmed trade sender does not match the connected wallet.");
+  if (!transaction.to || getAddress(transaction.to) !== getAddress(curve)) throw new Error("Confirmed trade target does not match the deployed curve.");
   let trade;
   try {
     trade = parseTradeReceipt(receipt, curve, side);
@@ -488,7 +425,7 @@ async function readSellQuote(token: Address, tokenAmount: bigint): Promise<SellQ
   return { reserveOut: quote.netSellerOutput, curveValue: quote.grossCurveOutput, protocolFee: quote.protocolFee, creatorFee: quote.creatorFee, netSellerOutput: quote.netSellerOutput };
 }
 
-async function resolveCurveAddress(token: Address): Promise<Address | undefined> {
+export async function resolveCurveAddress(token: Address): Promise<Address | undefined> {
   if (contractAddresses.zonkCurve) return contractAddresses.zonkCurve;
   if (!contractAddresses.zonkFactory) return undefined;
   const curve = await publicClient.readContract({ address: contractAddresses.zonkFactory, abi: zonkFactoryAbi, functionName: "curveOf", args: [token] });

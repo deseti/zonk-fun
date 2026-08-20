@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { parseEther, parseUnits, type Address, type Hash } from "viem";
 import type { BudgetBuyQuote, CurveTradeState, ProtectedSellQuote, TradeConfirmation } from "@/lib/contracts";
 import { formatNative, formatTokenAmount, formatWeiUsd, type EthUsdReference } from "@/lib/format";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 import { TradeAmountPresets } from "@/components/trade-amount-presets";
-import { explorerTransactionURL, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { TransactionModal } from "@/components/transaction-modal";
+import { closedTransactionModal, transactionModalReducer, type TransactionModalPhase } from "@/lib/transaction-modal";
 import {
   clearPendingTrade,
   DEFAULT_BUY_SLIPPAGE_BPS,
@@ -33,7 +35,7 @@ export type TradeCheck = (side: TradeSide, hash: Hash, recovery?: TradeRecovery)
 
 type Props = {
   authenticated: boolean;
-  walletMode: "embedded" | "external";
+  walletMode: "browser";
   chainId?: number;
   walletAddress?: Address;
   tokenAddress: Address;
@@ -52,7 +54,7 @@ type Props = {
 
 const QUOTE_TTL_MS = 60_000;
 const QUOTE_DEBOUNCE_MS = 500;
-const blockingStatuses: TradeTransactionStatus[] = ["preparing", "awaiting_approval", "approval_confirming", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown"];
+const blockingStatuses: TradeTransactionStatus[] = ["preparing", "awaiting_approval", "approval_confirming", "approval_confirmed", "preparing_sell", "awaiting_sell_signature", "awaiting_wallet", "submitted", "confirming", "confirmation_unknown"];
 
 export function TokenTradePanel(props: Props) {
   const { reference } = useOraclePrice();
@@ -67,6 +69,7 @@ export function TokenTradePanel(props: Props) {
   const [hash, setHash] = useState<Hash | undefined>(initialRecovery?.hash);
   const recoveryRef = useRef<TradeRecovery | undefined>(initialRecovery?.recovery);
   const [error, setError] = useState(initialRecovery ? "A submitted transaction still needs a definitive receipt before another trade is allowed." : "");
+  const [modal, dispatchModal] = useReducer(transactionModalReducer, initialRecovery ? { open: true, phase: "confirmation_unknown" } : closedTransactionModal);
   const operationRef = useRef(false);
   const walletInteractionRef = useRef(false);
   const approvalHashRef = useRef<Hash | undefined>(undefined);
@@ -74,6 +77,11 @@ export function TokenTradePanel(props: Props) {
   const submittedAtRef = useRef<number | undefined>(initialRecovery?.submittedAt);
   const generationRef = useRef(0);
   const quoteRequestRef = useRef(0);
+
+  useEffect(() => {
+    const phase = tradeModalPhase(status, side);
+    if (phase) dispatchModal({ type: "progress", phase });
+  }, [side, status]);
   const quoteDebounceRef = useRef(0);
   const identity = tradeIdentity(props.tokenAddress, props.walletAddress);
   const stateFingerprint = tradeStateFingerprint(props.state, side);
@@ -96,9 +104,9 @@ export function TokenTradePanel(props: Props) {
   const unavailable = Boolean(props.walletAddress) && !props.statePending && !props.stateError && (!props.state || !sideAllowed);
   const controlsUnavailable = unavailable || props.statePending || Boolean(props.stateError) || locked;
   const guard = !props.authenticated
-    ? "Log in with Privy to trade."
+    ? "Connect Wallet to trade."
     : !props.walletAddress
-      ? props.walletMode === "external" ? "The selected external wallet is not connected." : "Waiting for the Privy smart wallet."
+      ? "Connect Wallet to trade."
       : props.chainId !== selectedZonkChainId
         ? `Wrong network. Use ${selectedZonkChainName} (${selectedZonkChainId}).`
         : null;
@@ -235,12 +243,12 @@ export function TokenTradePanel(props: Props) {
     setError("");
     if (!props.authenticated || !props.walletAddress) {
       setStatus("failed");
-      setError(props.walletMode === "external" ? "Connect and select an external wallet before trading." : "Log in with Privy and wait for the smart wallet before trading.");
+      setError("Connect Wallet before trading.");
       return;
     }
     if (props.chainId !== selectedZonkChainId) {
       setStatus("failed");
-      setError(`Switch the ${props.walletMode} wallet to ${selectedZonkChainName} before trading.`);
+      setError(`Switch the connected wallet to ${selectedZonkChainName} before trading.`);
       return;
     }
     const existingRecovery = readPendingTrade(props.tokenAddress, props.walletAddress);
@@ -254,7 +262,7 @@ export function TokenTradePanel(props: Props) {
       return;
     }
     if (quoteStale || Date.now() >= quoteExpiresAt(quoteRecord)) {
-      setStatus("failed");
+      setStatus("expired");
       setQuoteRecord(null);
       setQuoteStale(true);
       setError("This quote expired. Request a fresh quote before submitting.");
@@ -330,7 +338,7 @@ export function TokenTradePanel(props: Props) {
         persistHashlessUnknown(tradeSide, wallet, token);
         setHash(approvalHashRef.current);
         setStatus("confirmation_unknown");
-        setError("The external token approval receipt is uncertain. New trades remain blocked; inspect the approval transaction before explicitly abandoning recovery.");
+        setError("The token approval receipt is uncertain. New trades remain blocked; inspect the approval transaction before explicitly abandoning recovery.");
       } else if (walletInteractionRef.current && !isDefinitivePreSubmissionFailure(reason)) {
         persistHashlessUnknown(tradeSide, wallet, token);
         setStatus("confirmation_unknown");
@@ -338,7 +346,7 @@ export function TokenTradePanel(props: Props) {
       } else {
         clearPendingTrade(token, wallet);
         submittedAtRef.current = undefined;
-        setStatus("failed");
+        setStatus(/reject|denied|cancelled/i.test(reason instanceof Error ? reason.message : String(reason)) ? "rejected" : "failed");
         setError(safeMessage(reason));
       }
     } finally {
@@ -424,7 +432,7 @@ export function TokenTradePanel(props: Props) {
           <button className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold transition-colors ${side === "sell" ? "bg-red-500 text-white shadow-lg shadow-red-950/25" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`} aria-pressed={side === "sell"} type="button" disabled={locked} onClick={() => changeSide("sell")}>Sell</button>
         </div>
         <div className="mt-5 flex items-start justify-between gap-3"><div><p className="text-xs text-zinc-500">Protected curve order</p><h3 className="mt-1 text-xl font-semibold text-white">{side === "buy" ? `Buy ${props.symbol}` : `Sell ${props.symbol}`}</h3></div><span className="badge-neutral">60s quote</span></div>
-        <div className="mt-4 min-w-0 rounded-xl border border-white/8 bg-black/15 p-3"><p className="text-xs text-zinc-500">Active signer · <span className="text-zinc-200">{props.walletMode === "external" ? "External wallet" : "Privy embedded smart wallet"}</span></p>{props.walletAddress && <p className="address mt-1 truncate" title={props.walletAddress}>{props.walletAddress}</p>}</div>
+        <div className="mt-4 min-w-0 rounded-xl border border-white/8 bg-black/15 p-3"><p className="text-xs text-zinc-500">Active signer · <span className="text-zinc-200">Connected browser wallet</span></p>{props.walletAddress && <p className="address mt-1 truncate" title={props.walletAddress}>{props.walletAddress}</p>}</div>
         {guard && <p className="status-box status-warning mt-4">{guard}</p>}
         {props.statePending && <p className="status-box mt-4 text-zinc-400">Loading balances and curve state…</p>}
         {props.stateError && <p className="status-box status-error mt-4">{props.stateError}</p>}
@@ -455,8 +463,8 @@ export function TokenTradePanel(props: Props) {
           <QuoteRow label="Fees" value="Protocol + creator" />
           <QuoteRow label="Slippage protection" value={`${(quote.slippageBps / 100).toFixed(2)}%`} />
           <QuoteRow label="Quote expiry" value={formatDeadline(quote.deadline)} />
-          {quote.side === "sell" && props.state && props.state.allowance < quote.tokenAmount && <p className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/[0.035] p-3 text-xs leading-5 text-zinc-400">{props.walletMode === "embedded" ? "Token approval and sale will be submitted atomically by the smart wallet." : "Your external wallet will request an approval transaction first. Zonk.fun waits for its receipt before requesting the sell transaction."}</p>}
-          <button className="button-primary mt-4 w-full" type="button" disabled={locked || Boolean(guard)} onClick={() => void submit()}>{locked ? "Trade locked…" : `Confirm ${quote.side}`}</button>
+          {quote.side === "sell" && props.state && props.state.allowance < quote.tokenAmount && <p className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/[0.035] p-3 text-xs leading-5 text-zinc-400">Your wallet will request an approval transaction first. Zonk.fun waits for its receipt, re-reads allowance, and then requests the sell transaction.</p>}
+          <button className="button-primary mt-4 w-full" type="button" disabled={locked || Boolean(guard)} onClick={() => dispatchModal({ type: "review" })}>{locked ? "Trade locked…" : `Confirm ${quote.side}`}</button>
           <details className="mt-3 border-t border-white/8 pt-3 text-xs text-zinc-500">
             <summary className="cursor-pointer font-medium text-zinc-300 hover:text-white">Quote details</summary>
             <div className="mt-3">
@@ -471,17 +479,37 @@ export function TokenTradePanel(props: Props) {
             </div>
           </details>
         </div> : <div className={`panel-subtle p-4 text-sm leading-6 ${quoteStale || quoteStateChanged ? "text-amber-200" : "text-zinc-500"}`}><p className="font-medium text-zinc-200">Protected quote</p><p className="mt-2">{quoteLoading ? "Refreshing from the active Zonk curve…" : quoteStale ? "This quote expired. Refresh it before submitting." : quoteStateChanged ? "Curve state or balances changed. Waiting for a fresh quote." : "Enter an amount to load contract-backed output, fees, protection, and expiry."}</p></div>}
-        {status !== "idle" && <div className={`status-box mt-5 ${status === "confirmed" ? "status-success" : ["failed", "reverted", "replaced"].includes(status) ? "status-error" : status === "confirmation_unknown" ? "status-warning" : ""}`} aria-live="polite" role="status">
-          <div className="flex items-start gap-3"><span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${locked && status !== "confirmation_unknown" ? "animate-pulse bg-cyan-300" : status === "confirmed" ? "bg-emerald-300" : ["failed", "reverted", "replaced"].includes(status) ? "bg-rose-300" : "bg-amber-300"}`} /><p className="font-medium">{tradeStatusLabel(status)}</p></div>
-          {hash && <a className="mt-2 block break-all text-cyan-300" href={explorerTransactionURL(hash)} target="_blank" rel="noreferrer">View Explorer</a>}
-          {(error || quoteStateChanged) && <p className="mt-2 text-sm text-red-200">{error || "Curve state or balances changed. Request a fresh quote."}</p>}
-          {status === "confirmed" && <p className="mt-2 text-zinc-400">The trade is confirmed. Balances and indexed views are being refreshed.</p>}
-          {status === "confirmation_unknown" && <div className="mt-3 flex flex-wrap gap-2">{hash && <button className="button-secondary" type="button" onClick={() => void recover("check")}>Check Again</button>}{hash && <button className="button-secondary" type="button" onClick={() => void recover("resume")}>Resume Confirmation</button>}<button className="button-secondary border-red-400/40 text-red-200" type="button" onClick={abandon}>Abandon Pending Trade</button></div>}
-        </div>}
       </div>
     </div>
+    <TransactionModal open={modal.open} title={`${side === "buy" ? "Buy" : status === "awaiting_approval" || status === "approval_confirming" ? "Approve" : "Sell"} ${props.symbol}`} phase={modal.phase} statusLabel={tradeStatusLabel(status)} wallet={props.walletAddress} hash={hash} error={error || (quoteStateChanged ? "Curve state or balances changed. Request a fresh quote." : undefined)} onClose={() => dispatchModal({ type: "close" })} onConfirm={() => void submit()} confirmLabel={side === "sell" && quote && props.state && props.state.allowance < quote.tokenAmount ? "Start approval + sell" : `Submit ${side}`} details={quote ? tradeModalDetails(quote, props.symbol, props.state?.decimals ?? 18) : []}>
+      {status === "confirmation_unknown" && <div className="mt-4 flex flex-wrap gap-2">{hash && <button className="button-secondary" type="button" onClick={() => void recover("check")}>Check Again</button>}{hash && <button className="button-secondary" type="button" onClick={() => void recover("resume")}>Resume Confirmation</button>}<button className="button-secondary border-red-400/40 text-red-200" type="button" onClick={abandon}>Abandon Pending Trade</button></div>}
+    </TransactionModal>
   </section>;
 }
+
+function tradeModalDetails(quote: Quote, symbol: string, decimals: number) {
+  return quote.side === "buy" ? [
+    { label: "Maximum input", value: formatNative(quote.maxReserveIn) },
+    { label: "Expected output", value: formatTokenAmount(quote.tokenAmount, decimals, symbol) },
+    { label: "Protocol fee", value: formatNative(quote.protocolFee) },
+    { label: "Creator fee", value: formatNative(quote.creatorFee) },
+    { label: "Slippage", value: `${(quote.slippageBps / 100).toFixed(2)}%` },
+    { label: "Quote expires", value: formatDeadline(quote.deadline) },
+  ] : [
+    { label: "Token input", value: formatTokenAmount(quote.tokenAmount, decimals, symbol) },
+    { label: "Expected output", value: formatNative(quote.reserveOut) },
+    { label: "Minimum output", value: formatNative(quote.minReserveOut) },
+    { label: "Protocol fee", value: formatNative(quote.protocolFee) },
+    { label: "Creator fee", value: formatNative(quote.creatorFee) },
+    { label: "Slippage", value: `${(quote.slippageBps / 100).toFixed(2)}%` },
+    { label: "Quote expires", value: formatDeadline(quote.deadline) },
+  ];
+}
+
+function tradeModalPhase(status: TradeTransactionStatus, side: TradeSide): TransactionModalPhase | undefined {
+  return ({ idle: undefined, preparing: "preparing", awaiting_approval: "awaiting_approval", approval_confirming: "approval_submitted", approval_confirmed: "approval_confirmed", preparing_sell: "preparing_sell", awaiting_sell_signature: "awaiting_sell_signature", awaiting_wallet: "awaiting_wallet", submitted: side === "sell" ? "sell_submitted" : "submitted", confirming: side === "sell" ? "sell_confirming" : "confirming", confirmation_unknown: "confirmation_unknown", confirmed: "confirmed", reverted: "failed", replaced: "failed", rejected: "rejected", expired: "expired", failed: "failed" } as const)[status];
+}
+function tradeStatusLabel(status: TradeTransactionStatus) { return ({ idle: "Review transaction", preparing: "Preparing and simulating the protected trade…", awaiting_approval: "Confirm token approval in your wallet…", approval_confirming: `Waiting for the approval receipt on ${selectedZonkChainName}…`, approval_confirmed: "Approval confirmed. Re-reading allowance…", preparing_sell: "Preparing and simulating the sell…", awaiting_sell_signature: "Confirm the sell transaction in your active wallet.", awaiting_wallet: "Confirm the transaction in your active wallet.", submitted: "Transaction submitted.", confirming: `Waiting for ${selectedZonkChainName} confirmation…`, confirmation_unknown: "Transaction confirmation is unknown. New trades are blocked.", confirmed: "Trade confirmed.", reverted: "Transaction reverted.", replaced: "Transaction replaced.", rejected: "Wallet request rejected.", expired: "Quote expired.", failed: "Trade failed." })[status]; }
 
 function QuoteRow({ label, value, secondary, strong = false }: { label: string; value: string; secondary?: string; strong?: boolean }) {
   return <div className="mt-2 flex min-w-0 items-start justify-between gap-4"><span className="text-zinc-500">{label}</span><span className="min-w-0 text-right"><span className={`block break-words ${strong ? "font-semibold text-cyan-100" : "text-zinc-200"}`}>{value}</span>{secondary && <span className="mt-0.5 block text-[0.68rem] text-zinc-600">{secondary}</span>}</span></div>;
@@ -546,30 +574,13 @@ function formatDeadline(deadline: bigint) {
   return `${new Date(Number(deadline) * 1000).toLocaleTimeString()} (${deadline.toString()})`;
 }
 
-function tradeStatusLabel(status: TradeTransactionStatus) {
-  return {
-    idle: "",
-    preparing: "Preparing and simulating the protected trade…",
-    awaiting_approval: "Confirm token approval in your external wallet…",
-    approval_confirming: `Waiting for the approval receipt on ${selectedZonkChainName}…`,
-    awaiting_wallet: "Confirm the transaction in your active wallet.",
-    submitted: "Transaction submitted.",
-    confirming: `Waiting for ${selectedZonkChainName} confirmation…`,
-    confirmation_unknown: "Transaction confirmation is unknown. New trades are blocked.",
-    confirmed: "Trade confirmed.",
-    reverted: "Transaction reverted.",
-    replaced: "Transaction replaced.",
-    failed: "Trade failed.",
-  }[status];
-}
-
 function tradeIdentity(token: Address, wallet?: Address) {
   return `${wallet?.toLowerCase() ?? "no-wallet"}:${token.toLowerCase()}`;
 }
 
 function tradeStateFingerprint(state: CurveTradeState | undefined, side: TradeSide) {
   if (!state) return "unavailable";
-  // Allowance and approval gas spend are expected to change during an external
+  // Allowance and approval gas spend are expected to change during a browser-wallet
   // sell. Track only the balance relevant to the quoted side; the sell helper
   // also re-reads token balance and allowance on-chain before submission.
   const relevantBalance = side === "buy" ? state.nativeBalance : state.tokenBalance;

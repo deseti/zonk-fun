@@ -1,27 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import type { Address, Hash } from "viem";
 import { canCreateToken, DevBuyFailure, idleTransaction, isHTTPSImageURL, parseDevBuyAmount, validateCreateToken, type CreateTokenInput, type TransactionState } from "@/lib/transactions";
-import type { ActiveWalletMode } from "@/providers/active-wallet-provider";
-import { explorerTransactionURL, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { TransactionModal } from "@/components/transaction-modal";
+import { closedTransactionModal, transactionModalReducer, type TransactionModalPhase } from "@/lib/transaction-modal";
 
 export type CreateResult = { tokenAddress: Address; hash: Hash; devBuyHash?: Hash };
 export type CreateExecution = (input: CreateTokenInput, report: (state: TransactionState) => void) => Promise<CreateResult>;
-type Props = { authenticated: boolean; chainId: number | undefined; walletAddress: Address | undefined; walletMode?: ActiveWalletMode; execute: CreateExecution; onSuccess: (address: Address) => void; onDevBuyChange?: (enabled: boolean) => void };
+type Props = { authenticated: boolean; chainId: number | undefined; walletAddress: Address | undefined; walletMode?: "browser"; execute: CreateExecution; onSuccess: (address: Address) => void; onDevBuyChange?: (enabled: boolean) => void };
 
-export function CreateTokenForm({ authenticated, chainId, walletAddress, walletMode = "embedded", execute, onSuccess, onDevBuyChange }: Props) {
+export function CreateTokenForm({ authenticated, chainId, walletAddress, walletMode = "browser", execute, onSuccess, onDevBuyChange }: Props) {
   const [input, setInput] = useState<CreateTokenInput>({ name: "", symbol: "", description: "", websiteUrl: "", xUrl: "", telegramUrl: "", discordUrl: "", imageFile: null, imageUrl: "", imageSource: "file", devBuyEth: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [review, setReview] = useState(false);
   const [tx, setTx] = useState<TransactionState>(idleTransaction);
   const [result, setResult] = useState<CreateResult | null>(null);
   const [devBuyFailure, setDevBuyFailure] = useState<DevBuyFailure | null>(null);
+  const [modal, dispatchModal] = useReducer(transactionModalReducer, closedTransactionModal);
   const [preview, setPreview] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submissionRef = useRef(false);
   const pending = ["preparing", "awaiting_wallet", "submitted", "confirming", "dev_buy_preparing", "dev_buy_awaiting_wallet", "dev_buy_submitted", "dev_buy_confirming"].includes(tx.status);
+
+  useEffect(() => {
+    const phase = createModalPhase(tx.status);
+    if (phase) dispatchModal({ type: "progress", phase });
+  }, [tx.status]);
 
   useEffect(() => {
     if (input.imageSource === "file") {
@@ -98,9 +105,9 @@ export function CreateTokenForm({ authenticated, chainId, walletAddress, walletM
 
   return <section className="panel mt-6 max-w-3xl md:mt-8" aria-label="Create token form">
     <div className="mb-5 flex items-start justify-between gap-3 border-b border-white/8 pb-4 md:mb-6 md:pb-5"><div><h2 className="text-lg font-semibold text-white">{review ? "Review your launch" : "Token details"}</h2><p className="mt-1 text-sm text-zinc-500">{review ? "These metadata details will define the launch." : "Give people enough context to recognize and understand the token."}</p></div><span className="badge-violet">{review ? "Step 2 of 2" : "Step 1 of 2"}</span></div>
-    {!authenticated && <p className="status-box status-warning mb-5">Log in with Wallet to create a token.</p>}
+    {!authenticated && <p className="status-box status-warning mb-5">Connect Wallet to create a token.</p>}
     {authenticated && chainId !== selectedZonkChainId && <p className="status-box status-warning mb-5">Wrong network. Use {selectedZonkChainName} ({selectedZonkChainId}).</p>}
-    {walletAddress && <div className="mb-5 rounded-xl border border-white/8 bg-black/15 px-3 py-2"><p className="text-xs text-zinc-500">Creator wallet · {walletMode === "external" ? "External" : "Privy embedded"}</p><p className="address mt-1 hidden sm:block">{walletAddress}</p><p className="address mt-1 truncate sm:hidden" title={walletAddress}>{`${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`}</p></div>}
+    {walletAddress && <div className="mb-5 rounded-xl border border-white/8 bg-black/15 px-3 py-2"><p className="text-xs text-zinc-500">Connected browser wallet</p><p className="address mt-1 hidden sm:block">{walletAddress}</p><p className="address mt-1 truncate sm:hidden" title={walletAddress}>{`${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`}</p></div>}
     {errors.network && <p className="status-box status-error mb-4" role="alert">{errors.network}</p>}
     {!review ? <div className="grid gap-5">
       <div className="grid gap-5 sm:grid-cols-2">
@@ -121,13 +128,21 @@ export function CreateTokenForm({ authenticated, chainId, walletAddress, walletM
     </div> : <div className="grid gap-5">
       <div className="grid gap-5 sm:grid-cols-[8rem_minmax(0,1fr)]">{preview && <div role="img" aria-label="Token image preview" className="aspect-square w-full max-w-32 rounded-2xl border border-white/10 bg-cover bg-center" style={{ backgroundImage: `url(${preview})` }} />}<dl className="grid min-w-0 gap-3 text-sm"><Summary label="Name" value={input.name} /><Summary label="Symbol" value={input.symbol} /><Summary label="About" value={input.description || "Not provided"} /><Summary label="Website" value={input.websiteUrl || "Not provided"} /><Summary label="X / Twitter" value={input.xUrl || "Not provided"} /><Summary label="Community" value={[input.telegramUrl, input.discordUrl].filter(Boolean).join(" · ") || "Not provided"} /><Summary label="Image" value={input.imageSource === "file" ? input.imageFile?.name || "Selected file" : input.imageUrl} />{parseDevBuyAmount(input.devBuyEth) > BigInt(0) && <Summary label="Dev buy" value={`${input.devBuyEth.trim()} ETH`} />}</dl></div>
       <p className="text-sm leading-6 text-zinc-400">Submitting uploads the metadata draft, asks your active wallet to create the token, then waits for confirmation and indexing. Only {selectedZonkChainName} network gas is required for the nonpayable factory transaction.</p>
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button className="button-secondary min-h-11" disabled={pending} onClick={() => setReview(false)}>Edit</button><button className="button-primary min-h-11 w-full sm:w-auto" disabled={pending || !canCreateToken(chainId, authenticated, pending)} onClick={() => void submit()}>{pending ? "Creation pending…" : "Confirm factory transaction"}</button></div>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button className="button-secondary min-h-11" disabled={pending} onClick={() => setReview(false)}>Edit</button><button className="button-primary min-h-11 w-full sm:w-auto" disabled={pending || !canCreateToken(chainId, authenticated, pending)} onClick={() => dispatchModal({ type: "review" })}>{pending ? "Creation pending…" : "Confirm factory transaction"}</button></div>
     </div>}
-    {tx.status !== "idle" && <div className={`status-box mt-6 ${["confirmed", "dev_buy_confirmed"].includes(tx.status) ? "status-success" : ["failed", "rejected", "dev_buy_failed", "dev_buy_rejected"].includes(tx.status) ? "status-error" : ""}`} aria-live="polite" role="status"><div className="flex items-start gap-3"><span className={`mt-0.5 h-2.5 w-2.5 flex-none rounded-full ${pending ? "animate-pulse bg-cyan-300" : ["confirmed", "dev_buy_confirmed"].includes(tx.status) ? "bg-emerald-300" : "bg-rose-300"}`} /><div className="min-w-0"><p className="font-medium">{statusLabel(tx.status, walletMode)}</p>{tx.hash && <a className="mt-2 block break-all text-cyan-300" href={explorerTransactionURL(tx.hash)} target="_blank" rel="noreferrer">View transaction on BaseScan ↗</a>}{tx.error && <p className="mt-2 text-red-200">{tx.error}</p>}</div></div></div>}
     {result && <div className="status-box status-success mt-5">Token created successfully. <Link className="font-semibold underline" href={`/token/${result.tokenAddress}`}>Open token</Link>{devBuyFailure && <>{devBuyFailure.retryable && <button className="button-secondary ml-3" type="button" disabled={pending} onClick={() => void retryDevBuy()}>Retry dev buy</button>}<p className="mt-2 text-sm text-zinc-300">Your token exists even though the Dev buy did not complete.</p></>}</div>}
+    <TransactionModal open={modal.open} title={tx.status.startsWith("dev_buy") ? `Buy ${input.symbol || "token"}` : "Create token"} phase={modal.phase} statusLabel={createStatusLabel(tx.status)} wallet={walletAddress} hash={tx.hash} error={tx.error} onClose={() => dispatchModal({ type: "close" })} onConfirm={() => void submit()} confirmLabel="Confirm in wallet" details={[
+      { label: "Token", value: `${input.name} (${input.symbol})` },
+      { label: "Factory value", value: "0 ETH · gas only" },
+      ...(hasDevBuy(input.devBuyEth) ? [{ label: "Optional Dev buy", value: `${input.devBuyEth.trim()} ETH` }] : []),
+    ]} />
   </section>;
 }
 
 function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) { return <label className="grid gap-2 text-sm text-zinc-300"><span className="font-medium text-zinc-200">{label}</span>{children}<span className={error ? "text-red-300" : "text-xs leading-5 text-zinc-500"} role={error ? "alert" : undefined}>{error || hint}</span></label>; }
 function Summary({ label, value }: { label: string; value: string }) { return <div className="min-w-0"><dt className="text-xs text-zinc-500">{label}</dt><dd className="mt-1 break-words font-medium text-zinc-100">{value}</dd></div>; }
-function statusLabel(status: TransactionState["status"], walletMode: ActiveWalletMode) { return ({ preparing: "Preparing metadata and factory transaction…", awaiting_wallet: walletMode === "external" ? "Confirm the transaction in your external wallet to create the token…" : "Confirm the transaction in Privy to create the token…", submitted: "Creation transaction submitted.", confirming: `Waiting for ${selectedZonkChainName} creation confirmation and indexing…`, confirmed: "Token creation confirmed.", failed: "Token creation failed.", rejected: "Transaction rejected. Token creation was not completed.", dev_buy_preparing: "Token created. Preparing a fresh protected Dev buy quote…", dev_buy_awaiting_wallet: walletMode === "external" ? "Token created. Confirm the Dev buy in your external wallet…" : "Token created. Confirm the Dev buy in Privy…", dev_buy_submitted: "Dev buy transaction submitted.", dev_buy_confirming: "Waiting for Dev buy confirmation…", dev_buy_confirmed: "Dev buy confirmed.", dev_buy_failed: "Token created, but Dev buy failed.", dev_buy_rejected: "Token created, but Dev buy was rejected.", idle: "" })[status]; }
+function createModalPhase(status: TransactionState["status"]): TransactionModalPhase | undefined {
+  return ({ idle: undefined, preparing: "preparing", awaiting_wallet: "awaiting_wallet", submitted: "submitted", confirming: "confirming", confirmed: "confirmed", failed: "failed", rejected: "rejected", dev_buy_preparing: "preparing", dev_buy_awaiting_wallet: "awaiting_wallet", dev_buy_submitted: "submitted", dev_buy_confirming: "confirming", dev_buy_confirmed: "confirmed", dev_buy_failed: "failed", dev_buy_rejected: "rejected" } as const)[status];
+}
+function createStatusLabel(status: TransactionState["status"]) { return ({ preparing: "Preparing metadata and factory transaction…", awaiting_wallet: "Confirm the transaction in your connected wallet to create the token…", submitted: "Creation transaction submitted.", confirming: `Waiting for ${selectedZonkChainName} creation confirmation and indexing…`, confirmed: "Token creation confirmed.", failed: "Token creation failed.", rejected: "Transaction rejected. Token creation was not completed.", dev_buy_preparing: "Token created. Preparing a fresh protected Dev buy quote…", dev_buy_awaiting_wallet: "Token created. Confirm the Dev buy in your connected wallet…", dev_buy_submitted: "Dev buy transaction submitted.", dev_buy_confirming: "Waiting for Dev buy confirmation…", dev_buy_confirmed: "Dev buy confirmed.", dev_buy_failed: "Token created, but Dev buy failed.", dev_buy_rejected: "Token created, but Dev buy was rejected.", idle: "Review transaction" })[status]; }
+function hasDevBuy(value: string) { try { return parseDevBuyAmount(value) > BigInt(0); } catch { return false; } }

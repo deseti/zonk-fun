@@ -1,7 +1,5 @@
 "use client";
 
-import { usePrivy, type BaseConnectedEthereumWallet } from "@privy-io/react-auth";
-import { useSmartWallets, type SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Address } from "viem";
@@ -9,28 +7,23 @@ import { TokenTradePanel, type TradeExecution, type TradeResume } from "@/compon
 import { GraduatedTokenSwap } from "@/components/graduated-token-swap";
 import { api } from "@/lib/api";
 import { formatNative, formatTokenAmount, formatWeiUsd } from "@/lib/format";
-import { captureTradeRecovery, checkTrade, confirmTrade, createExternalWalletClient, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitExternalBuy, submitExternalSell, submitSell } from "@/lib/contracts";
+import { captureTradeRecovery, checkTrade, confirmTrade, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitSell } from "@/lib/contracts";
 import type { TradeRecovery } from "@/lib/transactions";
-import { hasPrivyAppId } from "@/lib/wallet";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { useOraclePrice } from "@/providers/oracle-price-provider";
 import { explorerTransactionURL, selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
 
 export function TokenTrading({ tokenAddress, symbol, tokenPriceWei, graduated = false, canonicalPoolAddress }: { tokenAddress: Address; symbol: string; creator: Address; tokenPriceWei?: string | null; graduated?: boolean; canonicalPoolAddress?: Address }) {
   if (graduated) return <GraduatedTokenSwap tokenAddress={tokenAddress} canonicalPoolAddress={canonicalPoolAddress} symbol={symbol} />;
-  if (!hasPrivyAppId) return <div className="status-box status-warning">Set NEXT_PUBLIC_PRIVY_APP_ID to enable Privy trading.</div>;
-  return <PrivyTokenTrading tokenAddress={tokenAddress} symbol={symbol} tokenPriceWei={tokenPriceWei} />;
+  return <BrowserWalletTokenTrading tokenAddress={tokenAddress} symbol={symbol} tokenPriceWei={tokenPriceWei} />;
 }
 
-function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddress: Address; symbol: string; tokenPriceWei?: string | null }) {
-  const { authenticated } = usePrivy();
-  const { getClientForChain } = useSmartWallets();
-  const { mode, activeAddress: walletAddress, activeChainId: chainId, externalWallet } = useActiveWallet();
+function BrowserWalletTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddress: Address; symbol: string; tokenPriceWei?: string | null }) {
+  const { connected, activeAddress: walletAddress, activeChainId: chainId, walletClient } = useActiveWallet();
   const queryClient = useQueryClient();
   const stateQuery = useQuery({
     queryKey: activeTradeStateQueryKey(tokenAddress, walletAddress),
-    queryFn: () => loadActiveTradeState(tokenAddress, walletAddress!),
-    enabled: Boolean(walletAddress),
+    queryFn: () => loadActiveTradeState(tokenAddress, walletAddress),
     refetchInterval: 15_000,
   });
   const availabilityQuery = useQuery({
@@ -45,35 +38,21 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
   const quoteSell = (tokenAmount: bigint, slippageBps: number) => quoteSellAmount(tokenAddress, tokenAmount, slippageBps);
 
   const execute: TradeExecution = async (quote, report, assertSubmissionReady) => {
-    if (chainId !== selectedZonkChainId || !walletAddress) throw new Error(`Switch the ${mode} wallet to ${selectedZonkChainName} before trading.`);
+    if (chainId !== selectedZonkChainId || !walletAddress || !walletClient) throw new Error(`Connect a browser wallet on ${selectedZonkChainName} before trading.`);
     report("preparing");
     assertSubmissionReady();
     let hash;
-    if (mode === "external") {
-      const signer = selectActiveSigner(mode, { external: externalWallet });
-      if (signer.wallet.address.toLowerCase() !== walletAddress.toLowerCase()) throw new Error("The selected external wallet does not match the active account.");
-      const provider = await signer.wallet.getEthereumProvider();
-      assertSubmissionReady();
-      const client = createExternalWalletClient(provider, walletAddress);
-      if (quote.side === "buy") {
-        report("awaiting_wallet");
-        hash = await submitExternalBuy(client, walletAddress, tokenAddress, quote, assertSubmissionReady);
-      } else {
-        hash = await submitExternalSell(client, walletAddress, tokenAddress, quote, {
-          onApprovalRequested: () => report("awaiting_approval"),
-          onApprovalSubmitted: (approvalHash) => report("approval_confirming", approvalHash),
-          onApprovalConfirmed: () => report("preparing"),
-          onSellRequested: () => report("awaiting_wallet"),
-        }, assertSubmissionReady);
-      }
-    } else {
-      const client = await getClientForChain({ id: selectedZonkChainId });
-      assertSubmissionReady();
-      const signer = selectActiveSigner(mode, { embedded: client });
+    if (quote.side === "buy") {
       report("awaiting_wallet");
-      hash = quote.side === "buy"
-        ? await submitBuy(signer.client, walletAddress, tokenAddress, quote, assertSubmissionReady)
-        : await submitSell(signer.client, walletAddress, tokenAddress, quote, stateQuery.data?.allowance ?? BigInt(0), assertSubmissionReady);
+      hash = await submitBuy(walletClient, walletAddress, tokenAddress, quote, assertSubmissionReady);
+    } else {
+      hash = await submitSell(walletClient, walletAddress, tokenAddress, quote, {
+        onApprovalRequested: () => report("awaiting_approval"),
+        onApprovalSubmitted: (approvalHash) => report("approval_confirming", approvalHash),
+        onApprovalConfirmed: () => report("approval_confirmed"),
+        onSellPreparing: () => report("preparing_sell"),
+        onSellRequested: () => report("awaiting_sell_signature"),
+      }, assertSubmissionReady);
     }
     report("submitted", hash);
     const recovery = await captureTradeRecovery(hash);
@@ -96,20 +75,20 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
     void Promise.all(tradeInvalidationKeys(tokenAddress).map((queryKey) => queryClient.invalidateQueries({ queryKey })));
   };
 
-  if (availabilityQuery.isError) return <div className="status-box status-error">The deployed curve could not be read from {selectedZonkChainName}.</div>;
+  if (availabilityQuery.isError) return <div className="status-box status-error"><strong>Curve read failed on {selectedZonkChainName}.</strong><span className="mt-2 block break-words text-sm">{availabilityQuery.error.message}</span></div>;
   if (availabilityQuery.isPending) return <div className="status-box text-zinc-400">Checking the token’s {selectedZonkChainName} curve…</div>;
 	if (availabilityQuery.data === null) return <div className="status-box status-warning">The canonical endpoint curve is not available for this token.</div>;
   return <TokenTradePanel
-      authenticated={authenticated}
-      walletMode={mode}
+      authenticated={connected}
+      walletMode="browser"
       chainId={chainId}
       walletAddress={walletAddress}
       tokenAddress={tokenAddress}
       symbol={symbol}
       tokenPriceWei={tokenPriceWei}
       state={stateQuery.data}
-      statePending={stateQuery.isPending && Boolean(walletAddress)}
-      stateError={stateQuery.isError ? "Trading is unavailable because balances or an active Zonk curve could not be loaded." : undefined}
+      statePending={stateQuery.isPending}
+      stateError={stateQuery.isError ? stateQuery.error.message : undefined}
       quoteBuy={quoteBuy}
       quoteSell={quoteSell}
       execute={execute}
@@ -117,26 +96,6 @@ function PrivyTokenTrading({ tokenAddress, symbol, tokenPriceWei }: { tokenAddre
       check={check}
       onConfirmed={onConfirmed}
     />;
-}
-
-export function selectActiveSigner(
-  mode: "external",
-  input: { embedded?: SmartWalletClientType; external?: BaseConnectedEthereumWallet },
-): { mode: "external"; wallet: BaseConnectedEthereumWallet };
-export function selectActiveSigner(
-  mode: "embedded",
-  input: { embedded?: SmartWalletClientType; external?: BaseConnectedEthereumWallet },
-): { mode: "embedded"; client: SmartWalletClientType };
-export function selectActiveSigner(
-  mode: "embedded" | "external",
-  input: { embedded?: SmartWalletClientType; external?: BaseConnectedEthereumWallet },
-): { mode: "external"; wallet: BaseConnectedEthereumWallet } | { mode: "embedded"; client: SmartWalletClientType } {
-  if (mode === "external") {
-    if (!input.external) throw new Error("The selected external wallet is unavailable.");
-    return { mode, wallet: input.external } as const;
-  }
-  if (!input.embedded) throw new Error("The Privy embedded smart-wallet client is unavailable.");
-  return { mode, client: input.embedded } as const;
 }
 
 export function tradeInvalidationKeys(tokenAddress: Address) {
@@ -155,16 +114,11 @@ export function activeTradeStateQueryKey(tokenAddress: Address, walletAddress?: 
   return ["trade-state", tokenAddress, walletAddress] as const;
 }
 
-export function loadActiveTradeState(tokenAddress: Address, walletAddress: Address) {
+export function loadActiveTradeState(tokenAddress: Address, walletAddress?: Address) {
   return readTradeState(tokenAddress, walletAddress);
 }
 
 export function TokenTradeHistory({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
-  if (!hasPrivyAppId) return <TradeHistory tokenAddress={tokenAddress} symbol={symbol} />;
-  return <PrivyTradeHistory tokenAddress={tokenAddress} symbol={symbol} />;
-}
-
-function PrivyTradeHistory({ tokenAddress, symbol }: { tokenAddress: Address; symbol: string }) {
   const { activeAddress } = useActiveWallet();
   return <TradeHistory tokenAddress={tokenAddress} symbol={symbol} walletAddress={activeAddress} />;
 }

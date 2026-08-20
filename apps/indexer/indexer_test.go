@@ -48,12 +48,61 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	for _, table := range []string{"token_trade_buckets", "token_holder_balances", "token_metrics", "liquidity_events", "graduations", "fees", "trades", "curves", "tokens", "chain_events", "chain_blocks", "indexer_checkpoints"} {
+	for _, table := range []string{"token_trade_buckets", "token_holder_balances", "token_metrics", "liquidity_events", "graduations", "fees", "trades", "curves", "tokens", "chain_events", "chain_blocks", "indexer_checkpoints", "application_token_exclusions"} {
 		if _, err = s.pool.Exec(context.Background(), "TRUNCATE "+table+" CASCADE"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return s
+}
+
+func TestExcludedLaunchPreservesRawReplayAndScanAddressesWithoutProjections(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	token := common.HexToAddress("0x0000000000000000000000000000000000000e01")
+	creator := common.HexToAddress("0x0000000000000000000000000000000000000e02")
+	curve := common.HexToAddress("0x0000000000000000000000000000000000000e03")
+	pool := common.HexToAddress("0x0000000000000000000000000000000000000e04")
+	b := &types.Header{Number: big.NewInt(100), Time: 100}
+	launch := stamp(b, v3LaunchWithPool(t, token, creator, curve, pool))
+	metadata := map[string]TokenMetadata{token.Hex(): {Name: "Excluded", Symbol: "EX", Decimals: 18}}
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3", b, launch, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO application_token_exclusions(chain_id,token_address,reason) VALUES($1,lower($2),'test')`, BaseSepoliaChainID, token.Hex()); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"token_holder_balances", "token_trade_buckets", "token_metrics", "trades", "curves", "tokens"} {
+		if _, err := s.pool.Exec(ctx, `DELETE FROM `+table+` WHERE chain_id=$1 AND lower(token_address)=lower($2)`, BaseSepoliaChainID, token.Hex()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addresses, err := s.ScanContracts(ctx, BaseSepoliaChainID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[common.Address]bool{}
+	for _, address := range addresses {
+		found[address] = true
+	}
+	for _, address := range []common.Address{token, curve, pool} {
+		if !found[address] {
+			t.Fatalf("excluded canonical address %s fell out of the scan set: %v", address, addresses)
+		}
+	}
+	if err := s.ApplyWithMetadata(ctx, BaseSepoliaChainID, "v3", b, launch, metadata); err != nil {
+		t.Fatal(err)
+	}
+	var raw, projected int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM chain_events WHERE chain_id=$1 AND event_name='TokenLaunchedV3'`, BaseSepoliaChainID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM tokens WHERE chain_id=$1 AND lower(token_address)=lower($2)`, BaseSepoliaChainID, token.Hex()).Scan(&projected); err != nil {
+		t.Fatal(err)
+	}
+	if raw != 1 || projected != 0 {
+		t.Fatalf("raw launch=%d projected token=%d", raw, projected)
+	}
 }
 
 func v3Launch(t *testing.T, token, creator, curve common.Hash) types.Log {

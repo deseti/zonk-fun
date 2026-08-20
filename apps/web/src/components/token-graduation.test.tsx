@@ -61,10 +61,10 @@ describe("TokenGraduation", () => {
     expect(screen.getByText("12,345,678,901,234,567,890")).toBeTruthy();
     expect(screen.getByText("200M GRAD")).toBeTruthy();
     expect(screen.getByText("3 ETH")).toBeTruthy();
-    expect(screen.getByRole("link", { name: `${pool} ↗` }).getAttribute("href")).toBe(`https://sepolia.basescan.org/address/${pool}`);
-    expect(screen.getByRole("link", { name: `${custodian} ↗` }).getAttribute("href")).toBe(`https://sepolia.basescan.org/address/${custodian}`);
-    expect(screen.getByRole("link", { name: "Graduation transaction ↗" }).getAttribute("href")).toBe(`https://sepolia.basescan.org/tx/${graduationHash}`);
-    expect(screen.getByRole("link", { name: "Settlement transaction ↗" }).getAttribute("href")).toBe(`https://sepolia.basescan.org/tx/${settlementHash}`);
+    expect(screen.getByRole("link", { name: `${pool} ↗` }).getAttribute("href")).toBe(`https://basescan.org/address/${pool}`);
+    expect(screen.getByRole("link", { name: `${custodian} ↗` }).getAttribute("href")).toBe(`https://basescan.org/address/${custodian}`);
+    expect(screen.getByRole("link", { name: "Graduation transaction ↗" }).getAttribute("href")).toBe(`https://basescan.org/tx/${graduationHash}`);
+    expect(screen.getByRole("link", { name: "Settlement transaction ↗" }).getAttribute("href")).toBe(`https://basescan.org/tx/${settlementHash}`);
     expect(screen.queryByText(/12,345,678,901,234,567,890 ETH/)).toBeNull();
     expect(screen.queryByText(/999 ETH/)).toBeNull();
   });

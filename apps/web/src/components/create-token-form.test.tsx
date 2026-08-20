@@ -23,7 +23,7 @@ async function completeForm(user: ReturnType<typeof userEvent.setup>, file = ima
 function renderForm(overrides: Partial<ComponentProps<typeof CreateTokenForm>> = {}) {
   const execute = vi.fn<CreateExecution>().mockResolvedValue({ tokenAddress: token, hash });
   const onSuccess = vi.fn();
-  render(<CreateTokenForm authenticated chainId={84532} walletAddress={wallet} execute={execute} onSuccess={onSuccess} {...overrides} />);
+  render(<CreateTokenForm authenticated chainId={8453} walletAddress={wallet} execute={execute} onSuccess={onSuccess} {...overrides} />);
   return { execute, onSuccess };
 }
 
@@ -91,6 +91,7 @@ describe("CreateTokenForm", () => {
     expect((screen.getByLabelText("Image file") as HTMLInputElement).files).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
+    await user.click(screen.getByRole("button", { name: "Confirm in wallet" }));
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ imageSource: "file", imageFile: expect.any(File), imageUrl: "" }), expect.any(Function));
   });
 
@@ -133,7 +134,8 @@ describe("CreateTokenForm", () => {
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
-    expect(await screen.findByText(/Confirm the transaction in Privy/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Confirm in wallet" }));
+    expect(await screen.findByText(/Confirm the transaction in your connected wallet/)).toBeTruthy();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0].devBuyEth).toBe("");
     finish?.({ tokenAddress: token, hash });
@@ -155,6 +157,7 @@ describe("CreateTokenForm", () => {
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     expect(screen.getByText("0.10 ETH")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
+    await user.click(screen.getByRole("button", { name: "Confirm in wallet" }));
     expect(screen.getByRole("link", { name: "Open token" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Retry dev buy" }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(token));
@@ -168,6 +171,7 @@ describe("CreateTokenForm", () => {
     await completeForm(user);
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     await user.click(screen.getByRole("button", { name: "Confirm factory transaction" }));
+    await user.click(screen.getByRole("button", { name: "Confirm in wallet" }));
     expect(await screen.findByText(/Transaction rejected\./)).toBeTruthy();
     expect(screen.getByText("User rejected the request")).toBeTruthy();
   });
@@ -183,6 +187,7 @@ describe("CreateTokenForm", () => {
     await user.click(screen.getByRole("button", { name: "Review metadata" }));
     const submit = screen.getByRole("button", { name: "Confirm factory transaction" });
     await user.dblClick(submit);
+    await user.dblClick(screen.getByRole("button", { name: "Confirm in wallet" }));
     expect(execute).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("button", { name: /Creation pending/ }) as HTMLButtonElement).disabled).toBe(true);
   });

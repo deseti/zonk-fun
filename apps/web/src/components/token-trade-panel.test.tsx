@@ -62,7 +62,7 @@ function renderPanel(overrides: Partial<ComponentProps<typeof TokenTradePanel>> 
   const check = vi.fn().mockResolvedValue({ status: "pending", hash });
   const onConfirmed = vi.fn();
   const view = render(<TokenTradePanel
-    authenticated walletMode="embedded" chainId={84532} walletAddress={wallet} tokenAddress={token} symbol="ZONK"
+    authenticated walletMode="browser" chainId={8453} walletAddress={wallet} tokenAddress={token} symbol="ZONK"
     state={state} statePending={false} quoteBuy={quoteBuy} quoteSell={quoteSell}
     execute={execute} resume={resume} check={check} onConfirmed={onConfirmed} {...overrides}
   />);
@@ -158,11 +158,11 @@ describe("TokenTradePanel", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(view.quoteSell).toHaveBeenCalledTimes(1);
 
-    view.rerender(<TokenTradePanel authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    view.rerender(<TokenTradePanel authenticated walletMode="browser" chainId={8453} walletAddress={otherWallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(view.quoteBuy).toHaveBeenCalledTimes(2);
 
-    view.rerender(<TokenTradePanel authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={otherToken} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    view.rerender(<TokenTradePanel authenticated walletMode="browser" chainId={8453} walletAddress={otherWallet} tokenAddress={otherToken} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(view.quoteBuy).toHaveBeenCalledTimes(3);
   });
@@ -217,6 +217,7 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute });
     await requestBuyQuote(user);
     await user.dblClick(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.dblClick(screen.getByRole("button", { name: "Submit buy" }));
     expect(execute).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(/Confirm the transaction in your active wallet/)).toBeTruthy();
     expect(localStorage.getItem(pendingTradeKey(token, wallet))).toContain('"status":"confirmation_unknown"');
@@ -228,6 +229,7 @@ describe("TokenTradePanel", () => {
     await requestBuyQuote(user);
     storePending();
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText(/Another tab or prior session/)).toBeTruthy();
     expect(execute).not.toHaveBeenCalled();
   });
@@ -242,6 +244,7 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText(/confirmation is unknown/i)).toBeTruthy();
     expect(localStorage.getItem(pendingTradeKey(token, wallet))).toContain(hash);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
@@ -257,6 +260,7 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText(/confirmation is unknown/i)).toBeTruthy();
     expect(readPendingTrade(token, wallet)?.recovery).toEqual(recovery);
   });
@@ -270,6 +274,7 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText(/no transaction hash was returned/i)).toBeTruthy();
     expect(localStorage.getItem(pendingTradeKey(token, wallet))).toContain('"status":"confirmation_unknown"');
     expect(screen.queryByRole("button", { name: "Check Again" })).toBeNull();
@@ -340,9 +345,9 @@ describe("TokenTradePanel", () => {
     storePending();
     const view = renderPanel();
     expect(await screen.findByText(/confirmation is unknown/i)).toBeTruthy();
-    view.rerender(<TokenTradePanel key={`${otherWallet}:${token}`} authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    view.rerender(<TokenTradePanel key={`${otherWallet}:${token}`} authenticated walletMode="browser" chainId={8453} walletAddress={otherWallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
     await waitFor(() => expect(screen.queryByText(/confirmation is unknown/i)).toBeNull());
-    view.rerender(<TokenTradePanel key={`${otherWallet}:${otherToken}`} authenticated walletMode="embedded" chainId={84532} walletAddress={otherWallet} tokenAddress={otherToken} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    view.rerender(<TokenTradePanel key={`${otherWallet}:${otherToken}`} authenticated walletMode="browser" chainId={8453} walletAddress={otherWallet} tokenAddress={otherToken} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={view.execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
     expect(screen.getByRole("button", { name: "Get quote" })).toBeTruthy();
   });
 
@@ -352,6 +357,7 @@ describe("TokenTradePanel", () => {
     await requestBuyQuote(user);
     vi.setSystemTime(Date.now() + 60_001);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText("This quote expired. Request a fresh quote before submitting.")).toBeTruthy();
     expect(execute).not.toHaveBeenCalled();
   });
@@ -368,7 +374,8 @@ describe("TokenTradePanel", () => {
     const view = renderPanel({ execute });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
-    view.rerender(<TokenTradePanel authenticated walletMode="embedded" chainId={1} walletAddress={wallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
+    view.rerender(<TokenTradePanel authenticated walletMode="browser" chainId={1} walletAddress={wallet} tokenAddress={token} symbol="ZONK" state={state} statePending={false} quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed} />);
     continuePreparation?.();
     expect(await screen.findByText(/network.*changed before submission/i)).toBeTruthy();
     expect(localStorage.length).toBe(0);
@@ -380,7 +387,8 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
-    expect(await screen.findByText("Trade failed.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
+    expect(await screen.findByText("Wallet request rejected.")).toBeTruthy();
     expect(localStorage.length).toBe(0);
     expect((screen.getByRole("button", { name: "Get quote" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -390,12 +398,14 @@ describe("TokenTradePanel", () => {
     const first = renderPanel();
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText("Trade confirmed.")).toBeTruthy();
     expect(first.execute.mock.calls[0][0]).toMatchObject({ side: "buy", maxReserveIn: buyQuote.maxReserveIn });
     first.unmount();
     const second = renderPanel();
     await requestSellQuote(userEvent.setup());
     await userEvent.click(screen.getByRole("button", { name: "Confirm sell" }));
+    await userEvent.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
     expect(await screen.findByText("Trade confirmed.")).toBeTruthy();
     expect(second.execute.mock.calls[0][0]).toMatchObject({ side: "sell", minReserveOut: sellQuote.minReserveOut });
   });
@@ -419,6 +429,7 @@ describe("TokenTradePanel", () => {
     renderPanel({ execute: vi.fn<TradeExecution>().mockRejectedValue(new Error("User rejected request")) });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
     expect(await screen.findByText(/wallet request was rejected/i)).toBeTruthy();
     expect(localStorage.length).toBe(0);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
@@ -427,10 +438,11 @@ describe("TokenTradePanel", () => {
   it("does not report a rejected external-wallet transaction as successful", async () => {
     const user = userEvent.setup();
     const onConfirmed = vi.fn();
-    renderPanel({ walletMode: "external", execute: vi.fn<TradeExecution>().mockRejectedValue(Object.assign(new Error("User rejected the request"), { code: 4001 })), onConfirmed });
+    renderPanel({ walletMode: "browser", execute: vi.fn<TradeExecution>().mockRejectedValue(Object.assign(new Error("User rejected the request"), { code: 4001 })), onConfirmed });
     await requestBuyQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm buy" }));
-    expect(await screen.findByText("Trade failed.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Submit buy" }));
+    expect(await screen.findByText("Wallet request rejected.")).toBeTruthy();
     expect(screen.getByText(/wallet request was rejected/i)).toBeTruthy();
     expect(screen.queryByText("Trade confirmed.")).toBeNull();
     expect(onConfirmed).not.toHaveBeenCalled();
@@ -445,9 +457,10 @@ describe("TokenTradePanel", () => {
       report("approval_confirming", approvalHash);
       throw new Error("receipt timeout");
     });
-    renderPanel({ walletMode: "external", execute });
+    renderPanel({ walletMode: "browser", execute });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
     expect(await screen.findByText(/approval receipt is uncertain/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: "View Explorer" }).getAttribute("href")).toContain(approvalHash);
     expect(localStorage.getItem(pendingTradeKey(token, wallet))).toContain('"status":"confirmation_unknown"');
@@ -465,9 +478,10 @@ describe("TokenTradePanel", () => {
       assertReady();
       throw new Error("sell must not be submitted");
     });
-    renderPanel({ walletMode: "external", execute });
+    renderPanel({ walletMode: "browser", execute });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
     expect(await screen.findByText(/quote expired during wallet approval/i)).toBeTruthy();
     expect(screen.queryByText("Trade confirmed.")).toBeNull();
     expect(localStorage.length).toBe(0);
@@ -488,12 +502,13 @@ describe("TokenTradePanel", () => {
       report("confirming", hash);
       return { status: "confirmed", hash };
     });
-    const view = renderPanel({ walletMode: "external", execute });
+    const view = renderPanel({ walletMode: "browser", execute });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
     expect(await screen.findByText(/Waiting for the approval receipt/)).toBeTruthy();
     view.rerender(<TokenTradePanel
-      authenticated walletMode="external" chainId={84532} walletAddress={wallet} tokenAddress={token} symbol="ZONK"
+      authenticated walletMode="browser" chainId={8453} walletAddress={wallet} tokenAddress={token} symbol="ZONK"
       state={{ ...state, allowance: sellQuote.tokenAmount, nativeBalance: state.nativeBalance - BigInt(1) }} statePending={false}
       quoteBuy={view.quoteBuy} quoteSell={view.quoteSell} execute={execute} resume={view.resume} check={view.check} onConfirmed={view.onConfirmed}
     />);
@@ -505,11 +520,12 @@ describe("TokenTradePanel", () => {
   it("shows the actual sell simulation revert reason", async () => {
     const user = userEvent.setup();
     renderPanel({
-      walletMode: "external",
+      walletMode: "browser",
       execute: vi.fn<TradeExecution>().mockRejectedValue(new Error("ContractFunctionExecutionError: sell reverted with SlippageExceeded")),
     });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
     expect(await screen.findByText(/sell reverted with SlippageExceeded/)).toBeTruthy();
     expect(screen.queryByText(/preparation reverted before submission/i)).toBeNull();
     expect(screen.queryByText("Trade confirmed.")).toBeNull();
@@ -524,10 +540,11 @@ describe("TokenTradePanel", () => {
       report("confirming", hash);
       return new Promise((resolve) => { confirmReceipt = resolve; });
     });
-    const { onConfirmed } = renderPanel({ walletMode: "external", execute });
+    const { onConfirmed } = renderPanel({ walletMode: "browser", execute });
     await requestSellQuote(user);
     await user.click(screen.getByRole("button", { name: "Confirm sell" }));
-    expect(await screen.findByText(/Waiting for Base Sepolia confirmation/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Start approval \+ sell|Submit sell/ }));
+    expect(await screen.findByText(/Waiting for Base confirmation/)).toBeTruthy();
     expect(screen.queryByText("Trade confirmed.")).toBeNull();
     expect(onConfirmed).not.toHaveBeenCalled();
     confirmReceipt?.({ status: "confirmed", hash });

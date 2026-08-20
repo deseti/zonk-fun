@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #05090f;
+  --background: #02060c;
   --surface: #0a111a;
   --surface-raised: #0e1722;
   --surface-soft: #111c29;
@@ -36,9 +36,11 @@ body {
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
   background:
-    radial-gradient(circle at 82% -8%, rgb(34 211 238 / 0.11), transparent 34rem),
-    radial-gradient(circle at 15% 18%, rgb(124 58 237 / 0.07), transparent 28rem),
+    radial-gradient(circle at 88% -8%, rgb(56 189 248 / 0.13), transparent 35rem),
+    radial-gradient(circle at 8% 28%, rgb(14 116 144 / 0.10), transparent 32rem),
+    linear-gradient(145deg, rgb(1 5 11 / 0.98) 0%, rgb(4 13 24 / 0.98) 52%, rgb(2 7 14 / 0.99) 100%),
     var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
@@ -239,6 +241,33 @@ input.header-search-input { min-height: 2.35rem; border-radius: 0.65rem; padding
 .status-error { border-color: rgb(251 113 133 / 0.25); background: rgb(127 29 29 / 0.1); color: #fecdd3; }
 .status-warning { border-color: rgb(251 191 36 / 0.25); background: rgb(120 53 15 / 0.1); color: #fde68a; }
 .status-success { border-color: rgb(52 211 153 / 0.23); background: rgb(6 78 59 / 0.1); color: #a7f3d0; }
+
+.transaction-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+  background: rgb(0 3 8 / 0.78);
+  backdrop-filter: blur(10px);
+}
+.transaction-modal {
+  width: min(100%, 31rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  border: 1px solid rgb(103 232 249 / 0.18);
+  border-radius: 1.25rem;
+  background: linear-gradient(150deg, rgb(9 20 32 / 0.99), rgb(3 9 17 / 0.995));
+  padding: 1.25rem;
+  box-shadow: 0 28px 90px rgb(0 0 0 / 0.62), 0 0 38px rgb(34 211 238 / 0.07);
+}
+.transaction-modal-close { display: grid; min-height: 2.5rem; min-width: 2.5rem; place-items: center; border-radius: 0.65rem; color: #a1a1aa; font-size: 1.35rem; }
+.transaction-modal-close:hover { background: rgb(255 255 255 / 0.06); color: white; }
+.transaction-modal-state { display: flex; align-items: flex-start; gap: 0.75rem; margin-top: 1rem; border: 1px solid rgb(103 232 249 / 0.12); border-radius: 0.85rem; background: rgb(34 211 238 / 0.045); padding: 0.85rem; }
+.transaction-modal-state-error { border-color: rgb(251 113 133 / 0.22); background: rgb(127 29 29 / 0.11); }
+.transaction-modal-state-success { border-color: rgb(52 211 153 / 0.22); background: rgb(6 78 59 / 0.11); }
 .skeleton { position: relative; overflow: hidden; background: rgb(148 163 184 / 0.08); }
 .skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.055), transparent); animation: shimmer 1.5s infinite; }
 @keyframes shimmer { to { transform: translateX(100%); } }
@@ -285,6 +314,8 @@ input.header-search-input { min-height: 2.35rem; border-radius: 0.65rem; padding
   .top-token-card { width: 15.5rem; min-width: 15.5rem; }
   .panel { border-radius: var(--radius); padding: 1rem; }
   .button-primary, .button-secondary, .button-ghost { min-height: 2.875rem; }
+  .transaction-modal-backdrop { align-items: end; padding: 0; }
+  .transaction-modal { width: 100%; max-height: min(88dvh, 46rem); border-radius: 1.25rem 1.25rem 0 0; padding: 1.1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px)); }
 }
 
 @media (min-width: 640px) { .market-hero { padding: 1.75rem 2rem; } }

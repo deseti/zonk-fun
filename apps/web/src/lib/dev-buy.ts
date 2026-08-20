@@ -1,9 +1,7 @@
-import type { BaseConnectedEthereumWallet } from "@privy-io/react-auth";
-import type { SmartWalletClientType } from "@privy-io/react-auth/smart-wallets";
-import type { Address, Hash } from "viem";
-import { confirmTrade, createExternalWalletClient, quoteBuyByBudget, readTradeState, submitBuy, submitExternalBuy } from "@/lib/contracts";
+import type { Address, Hash, WalletClient } from "viem";
+import { confirmTrade, quoteBuyByBudget, readTradeState, submitBuy } from "@/lib/contracts";
 import { DEFAULT_BUY_SLIPPAGE_BPS, type TransactionState } from "@/lib/transactions";
-import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
+import { selectedZonkChainName } from "@/lib/chain";
 
 export class DevBuyAttemptError extends Error {
   constructor(message: string, public readonly retryable: boolean, public readonly buyHash?: Hash, public readonly rejected = false) {
@@ -17,30 +15,19 @@ export type DevBuyInput = {
   creatorAddress: Address;
   amount: bigint;
   creationHash: Hash;
-  walletMode: "embedded" | "external";
-  externalWallet?: BaseConnectedEthereumWallet;
-  getClientForChain: (chain: { id: number }) => Promise<SmartWalletClientType | null | undefined>;
+  walletClient: WalletClient;
   report: (state: TransactionState) => void;
 };
 
 export async function executeDevBuy(input: DevBuyInput): Promise<Hash> {
-  const { tokenAddress, creatorAddress, amount, creationHash, walletMode, externalWallet, getClientForChain, report } = input;
+  const { tokenAddress, creatorAddress, amount, creationHash, walletClient, report } = input;
   report({ status: "dev_buy_preparing", hash: creationHash });
   let buyHash: Hash | undefined;
   try {
     const state = await readTradeState(tokenAddress, creatorAddress);
     const quote = await quoteBuyByBudget(tokenAddress, amount, state, DEFAULT_BUY_SLIPPAGE_BPS);
-    if (walletMode === "external") {
-      if (!externalWallet || externalWallet.address.toLowerCase() !== creatorAddress.toLowerCase()) throw new Error("The selected external wallet does not match the active account.");
-      const provider = await externalWallet.getEthereumProvider();
-      report({ status: "dev_buy_awaiting_wallet", hash: creationHash });
-      buyHash = await submitExternalBuy(createExternalWalletClient(provider, creatorAddress), creatorAddress, tokenAddress, quote);
-    } else {
-      const client = await getClientForChain({ id: selectedZonkChainId });
-      if (!client) throw new Error(`The ${selectedZonkChainName} smart-wallet client is unavailable.`);
-      report({ status: "dev_buy_awaiting_wallet", hash: creationHash });
-      buyHash = await submitBuy(client, creatorAddress, tokenAddress, quote);
-    }
+    report({ status: "dev_buy_awaiting_wallet", hash: creationHash });
+    buyHash = await submitBuy(walletClient, creatorAddress, tokenAddress, quote);
     report({ status: "dev_buy_submitted", hash: buyHash });
     report({ status: "dev_buy_confirming", hash: buyHash });
     const confirmation = await confirmTrade(buyHash, "buy", tokenAddress, creatorAddress);

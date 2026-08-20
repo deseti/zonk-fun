@@ -1,13 +1,6 @@
 import { encodeFunctionData, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { erc20TradeAbi, publicClient } from "@/lib/contracts";
 import { selectedZonkChainId, selectedZonkChainName } from "@/lib/chain";
-import { BASE_MAINNET_CHAIN_ID } from "@zonk/contracts-sdk";
-
-/** Official Uniswap Base Sepolia deployments (developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments). */
-export const BASE_SEPOLIA_WETH = "0x4200000000000000000000000000000000000006" as const;
-export const BASE_SEPOLIA_V3_FACTORY = "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24" as const;
-export const BASE_SEPOLIA_QUOTER_V2 = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27" as const;
-export const BASE_SEPOLIA_SWAP_ROUTER_02 = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4" as const;
 export const BASE_MAINNET_WETH = "0x4200000000000000000000000000000000000006" as const;
 export const BASE_MAINNET_V3_FACTORY = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD" as const;
 export const BASE_MAINNET_QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a" as const;
@@ -15,10 +8,8 @@ export const BASE_MAINNET_SWAP_ROUTER_02 = "0x2626664c2603336E57B271c5C0b26F4217
 export const CANONICAL_POOL_FEE = 10_000;
 export const QUOTE_TTL_MS = 60_000;
 
-const selectedWeth = selectedZonkChainId === BASE_MAINNET_CHAIN_ID ? BASE_MAINNET_WETH : BASE_SEPOLIA_WETH;
-const selectedCanonicalFactory = selectedZonkChainId === BASE_MAINNET_CHAIN_ID
-  ? BASE_MAINNET_V3_FACTORY
-  : BASE_SEPOLIA_V3_FACTORY;
+const selectedWeth = BASE_MAINNET_WETH;
+const selectedCanonicalFactory = BASE_MAINNET_V3_FACTORY;
 
 /**
  * Uniswap swap-router-contracts Constants.CONTRACT_BALANCE.
@@ -61,7 +52,7 @@ export type GraduatedExecutionState = { eth: bigint; token: bigint; allowance: b
 export const GRADUATED_ALLOWANCE_POLL_DELAYS_MS = [0, 250, 500, 1_000, 1_500] as const;
 
 /**
- * Some external wallet providers expose a successful approval receipt before
+ * Some browser wallet providers expose a successful approval receipt before
  * their allowance read reflects the new state. Poll the authoritative chain
  * read before allowing the dependent swap to continue.
  */
@@ -107,9 +98,7 @@ export async function orchestrateGraduatedSwap(input: {
 }
 
 export function configuredUniswapV3(): UniswapV3Config | undefined {
-  const raw = selectedZonkChainId === BASE_MAINNET_CHAIN_ID
-    ? [process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY]
-    : [process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_SEPOLIA_UNISWAP_V3_FACTORY];
+  const raw = [process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02, process.env.NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY];
   if (raw.some((value) => !value || !isAddress(value) || /^0x0{40}$/i.test(value))) return undefined;
   const config = { quoter: getAddress(raw[0]!), router: getAddress(raw[1]!), factory: getAddress(raw[2]!) };
   if (config.factory.toLowerCase() !== selectedCanonicalFactory.toLowerCase()) return undefined;

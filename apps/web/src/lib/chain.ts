@@ -1,21 +1,17 @@
 import {
   BASE_MAINNET_CHAIN_ID,
-  BASE_SEPOLIA_CHAIN_ID,
-  baseSepolia,
-  resolveZonkChain,
-  type ZonkChain,
+  baseMainnet,
 } from "@zonk/contracts-sdk";
 import type { Address } from "viem";
 
-const configuredChainId = process.env.NEXT_PUBLIC_ZONK_CHAIN_ID?.trim() || String(BASE_SEPOLIA_CHAIN_ID);
+const configuredChainId = process.env.NEXT_PUBLIC_ZONK_CHAIN_ID?.trim() || String(BASE_MAINNET_CHAIN_ID);
+if (configuredChainId !== String(BASE_MAINNET_CHAIN_ID)) throw new Error(`Zonk.fun web requires Base Mainnet chain ID ${BASE_MAINNET_CHAIN_ID}; received ${configuredChainId}.`);
 
-export const selectedZonkChain: ZonkChain = resolveZonkChain(configuredChainId);
+export const selectedZonkChain = baseMainnet;
 export const selectedZonkChainId = selectedZonkChain.id;
 export const selectedZonkChainName = selectedZonkChain.name;
 export const selectedZonkExplorer = selectedZonkChain.blockExplorers.default.url;
-export const selectedZonkRPCURL = selectedZonkChainId === BASE_MAINNET_CHAIN_ID
-  ? process.env.NEXT_PUBLIC_BASE_MAINNET_RPC_URL?.trim() || selectedZonkChain.rpcUrls.default.http[0]
-  : process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL?.trim() || baseSepolia.rpcUrls.default.http[0];
+export const selectedZonkRPCURL = process.env.NEXT_PUBLIC_BASE_MAINNET_RPC_URL?.trim() || selectedZonkChain.rpcUrls.default.http[0];
 
 export function isSelectedZonkChain(chainId: number | undefined): boolean {
   return chainId === selectedZonkChainId;
