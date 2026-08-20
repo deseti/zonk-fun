@@ -24,6 +24,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Zonk.fun launch and trade community tokens",
   description: `A non-custodial token launchpad on ${selectedZonkChainName}.`,
+  other: {
+    "base:app_id": "6a86d307abf0a9eb2b3c7565",
+  },
 };
 
 export const viewport: Viewport = {
