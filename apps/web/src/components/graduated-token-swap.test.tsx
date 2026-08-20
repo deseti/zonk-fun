@@ -47,7 +47,10 @@ vi.mock("@/lib/contracts", async (importOriginal) => {
 });
 
 import { GraduatedTokenSwap } from "./graduated-token-swap";
+import { walletTransport } from "./graduated-token-swap";
 import { orchestrateGraduatedSwap } from "@/lib/uniswap-v3";
+import { ZONK_BUILDER_CODE_DATA_SUFFIX } from "@/lib/builder-code";
+import { approvalCall, buildGraduatedSwapTransaction } from "@/lib/uniswap-v3";
 
 const source = readFileSync(resolve(process.cwd(), "src/components/graduated-token-swap.tsx"), "utf8");
 
@@ -70,6 +73,23 @@ afterEach(() => {
 });
 
 describe("graduated swap presets", () => {
+  it("attributes both graduated-token approval and swap sends", async () => {
+    const sendTransaction = vi.fn().mockResolvedValue(`0x${"ab".repeat(32)}`);
+    const send = walletTransport({ sendTransaction } as never, "0x0000000000000000000000000000000000000022");
+    const approval = { to: "0x0000000000000000000000000000000000000011", data: "0x1234", value: BigInt(0) } as const;
+    const swap = { to: "0x0000000000000000000000000000000000000099", data: "0x5678", value: BigInt(10) } as const;
+    vi.mocked(approvalCall).mockReturnValue(approval);
+    vi.mocked(buildGraduatedSwapTransaction).mockReturnValue(swap);
+
+    await send(approvalCall(approval.to, swap.to, BigInt(10)), "Approve token");
+    await send(buildGraduatedSwapTransaction({} as never, {} as never, "0x0000000000000000000000000000000000000022"), "Swap");
+
+    expect(sendTransaction).toHaveBeenNthCalledWith(1, expect.objectContaining({ ...approval, dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX }));
+    expect(sendTransaction).toHaveBeenNthCalledWith(2, expect.objectContaining({ ...swap, dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX }));
+    expect(approval).not.toHaveProperty("dataSuffix");
+    expect(swap).not.toHaveProperty("dataSuffix");
+  });
+
   it("reuses the shared preset helper and existing quote lifecycle", () => {
     expect(source).toContain("TradeAmountPresets");
     expect(source).toContain("changeAmount");

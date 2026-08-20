@@ -20,6 +20,7 @@ import {
 import { createPublicClient, getAddress, http, keccak256, stringToBytes, type Address, type Hash, type Transaction, type TransactionReceipt, type WalletClient } from "viem";
 import type { TradeRecovery } from "@/lib/transactions";
 import { selectedZonkChain, selectedZonkChainName, selectedZonkRPCURL } from "@/lib/chain";
+import { withBuilderCode } from "@/lib/builder-code";
 
 export { contractAddresses, erc20TradeAbi, feeManagerV3Abi, graduationManagerV3Abi, graduationSettlementExecutorV3Abi, permanentLPFeeVaultV3Abi, permanentLPCustodianV3Abi, zonkCurveAbi, zonkFactoryAbi };
 
@@ -47,7 +48,7 @@ export async function submitCreateToken(client: BrowserWalletClient, creator: Ad
   const salt = typeof userSalt === "string" ? userSalt : ("userSalt" in userSalt ? userSalt.userSalt : keccak256(stringToBytes(`${name}-${symbol}-${Date.now()}`)));
   const args = [name, symbol, salt] as const;
   const { request } = await publicClient.simulateContract({ address: factory, abi: zonkFactoryAbi, functionName: "createToken", args, account: creator });
-  return client.writeContract(request);
+  return client.writeContract(withBuilderCode(request));
 }
 
 export async function confirmCreatedToken(hash: Hash) {
@@ -160,7 +161,7 @@ export async function submitBuy(client: BrowserWalletClient, account: Address, t
   });
   assertBuyQuoteFresh(quote);
   assertReady();
-  return client.writeContract(request);
+  return client.writeContract(withBuilderCode(request));
 }
 
 export async function submitSell(
@@ -189,7 +190,7 @@ export async function submitSell(
     assertReady();
     callbacks.onApprovalRequested();
     const { request: approvalRequest } = await publicClient.simulateContract({ address: token, abi: erc20TradeAbi, functionName: "approve", args: [curve, quote.tokenAmount], account });
-    const approvalHash = await client.writeContract(approvalRequest);
+    const approvalHash = await client.writeContract(withBuilderCode(approvalRequest));
     callbacks.onApprovalSubmitted(approvalHash);
     const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approvalHash, confirmations: 1, timeout: 120_000 });
     if (approvalReceipt.status !== "success") throw new Error(`The token approval transaction reverted on ${selectedZonkChainName}.`);
@@ -211,7 +212,7 @@ export async function submitSell(
   assertSellDeadline(quote);
   assertReady();
   callbacks.onSellRequested();
-  return client.writeContract(request);
+  return client.writeContract(withBuilderCode(request));
 }
 
 async function readBrowserSellState(token: Address, account: Address, curve: Address) {

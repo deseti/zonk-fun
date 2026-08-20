@@ -11,6 +11,7 @@ import { tradeInvalidationKeys } from "@/components/token-trading";
 import { TradeAmountPresets } from "@/components/trade-amount-presets";
 import { useActiveWallet } from "@/providers/active-wallet-provider";
 import { approvalCall, buildGraduatedSwapTransaction, configuredUniswapV3, orchestrateGraduatedSwap, quoteGraduatedSwap, quoteIsFresh, simulateGraduatedSwapTransaction, validateCanonicalPool, type GraduatedQuote, type GraduatedSwapTransaction } from "@/lib/uniswap-v3";
+import { withBuilderCode } from "@/lib/builder-code";
 
 type State = { eth: bigint; token: bigint; allowance: bigint; decimals: number };
 type SwapStatus = "idle" | "quoting" | "awaiting_approval" | "approval_confirming" | "approval_confirmed" | "preparing_sell" | "awaiting_wallet" | "submitted" | "confirming" | "confirmed" | "rejected" | "error";
@@ -136,8 +137,8 @@ export function GraduatedTokenSwap({ tokenAddress, canonicalPoolAddress, symbol 
 
 type Sender = (transaction: GraduatedSwapTransaction, label: string) => Promise<Hash>;
 
-function walletTransport(client: WalletClient, wallet: Address): Sender {
-  return (transaction) => client.sendTransaction({ account: wallet, chain: selectedZonkChain, ...transaction });
+export function walletTransport(client: WalletClient, wallet: Address): Sender {
+  return (transaction) => client.sendTransaction(withBuilderCode({ account: wallet, chain: selectedZonkChain, ...transaction }));
 }
 
 async function approveExactly(send: Sender, token: Address, router: Address, amount: bigint, wallet: Address, setHash: (hash: Hash) => void, setStatus: (status: SwapStatus) => void) {

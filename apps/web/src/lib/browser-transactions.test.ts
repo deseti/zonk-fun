@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Address, Hash } from "viem";
-import { contractAddresses, publicClient, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitSell } from "./contracts";
+import { contractAddresses, publicClient, quoteBuyByBudget, quoteSellAmount, readCurveAvailability, readTradeState, submitBuy, submitCreateToken, submitSell } from "./contracts";
+import { ZONK_BUILDER_CODE_DATA_SUFFIX } from "./builder-code";
 
 const factory = "0x90B371F571975a0b0693Dc3C46Eea19733c72ddD" as Address;
 const token = "0xEC2710A9df34b66B07BF96933d13B76e1d526c07" as Address;
@@ -55,6 +56,17 @@ describe("Base Mainnet curve reads", () => {
 });
 
 describe("browser-wallet curve transactions", () => {
+  it("attributes token creation while leaving simulation unchanged", async () => {
+    contractAddresses.zonkFactory = factory;
+    const request = { address: factory, data: "0x1234" } as const;
+    const simulate = vi.spyOn(publicClient, "simulateContract").mockResolvedValue({ request } as never);
+    const writeContract = vi.fn().mockResolvedValue(hash);
+    await expect(submitCreateToken({ writeContract } as never, wallet, "Zonk", "ZONK", `0x${"12".repeat(32)}`)).resolves.toBe(hash);
+    expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ functionName: "createToken", account: wallet }));
+    expect(writeContract).toHaveBeenCalledWith({ ...request, dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX });
+    expect(request).not.toHaveProperty("dataSuffix");
+  });
+
   it("loads Base Mainnet buy and sell quotes", async () => {
     contractAddresses.zonkCurve = curve;
     vi.spyOn(publicClient, "readContract").mockImplementation(async (request) => request.functionName === "quoteBuy"
@@ -68,11 +80,15 @@ describe("browser-wallet curve transactions", () => {
     contractAddresses.zonkCurve = curve;
     const order: string[] = [];
     vi.spyOn(publicClient, "getBalance").mockResolvedValue(BigInt(100));
-    vi.spyOn(publicClient, "simulateContract").mockImplementation(async () => { order.push("simulate"); return { request: { address: curve } } as never; });
-    const client = { writeContract: vi.fn(async () => { order.push("wallet"); return hash; }) } as never;
+    const request = { address: curve, data: "0x5678" } as const;
+    vi.spyOn(publicClient, "simulateContract").mockImplementation(async () => { order.push("simulate"); return { request } as never; });
+    const writeContract = vi.fn(async () => { order.push("wallet"); return hash; });
+    const client = { writeContract } as never;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 60);
     await expect(submitBuy(client, wallet, token, { reserveIn: BigInt(1), curveCost: BigInt(1), protocolFee: BigInt(0), creatorFee: BigInt(0), tokenAmount: BigInt(10), maxReserveIn: BigInt(1), slippageBps: 50, deadline })).resolves.toBe(hash);
     expect(order).toEqual(["simulate", "wallet"]);
+    expect(writeContract).toHaveBeenCalledWith({ ...request, dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX });
+    expect(request).not.toHaveProperty("dataSuffix");
   });
 
   it("waits for approval, re-reads allowance, simulates sell, then requests sell", async () => {
@@ -88,6 +104,8 @@ describe("browser-wallet curve transactions", () => {
     });
     expect(events).toEqual(["approval_requested", "approval_submitted", "approval_confirmed", "sell_requested"]);
     expect(writeContract).toHaveBeenCalledTimes(2);
+    expect(writeContract).toHaveBeenNthCalledWith(1, expect.objectContaining({ dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX }));
+    expect(writeContract).toHaveBeenNthCalledWith(2, expect.objectContaining({ dataSuffix: ZONK_BUILDER_CODE_DATA_SUFFIX }));
   });
 
   it("separates rejected signatures and insufficient token balance", async () => {
