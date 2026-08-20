@@ -1,0 +1,53 @@
+---
+title: "Environment variables"
+description: "Safe reference for current application and development configuration."
+---
+
+<Warning>
+  Never commit `.env`, RPC credentials, private keys, seed phrases, keystore passwords, database passwords, or API keys. Every `NEXT_PUBLIC_` value is exposed to browsers.
+</Warning>
+
+## Application and chain
+
+| Variable | Purpose |
+| --- | --- |
+| `APP_ENV` | Runtime environment label |
+| `ZONK_CHAIN_ID` | Selected server chain; production is `8453` |
+| `API_HOST`, `API_PORT` | Go API bind settings |
+
+## Frontend
+
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_API_URL` | Browser-visible API origin |
+| `INTERNAL_API_URL` | Server-side web-to-API origin |
+| `NEXT_PUBLIC_ZONK_CHAIN_ID` | Browser chain selector; production must be `8453` |
+| `NEXT_PUBLIC_BASE_MAINNET_RPC_URL` | Browser-safe Base RPC |
+| `NEXT_PUBLIC_ZONK_FACTORY_V3_ADDRESS` | Production factory |
+| `NEXT_PUBLIC_FEE_MANAGER_V3_ADDRESS` | Fee manager |
+| `NEXT_PUBLIC_GRADUATION_MANAGER_V3_ADDRESS` | Graduation manager |
+| `NEXT_PUBLIC_PERMANENT_LP_FEE_VAULT_V3_ADDRESS` | LP fee vault |
+| `NEXT_PUBLIC_PERMANENT_LP_CUSTODIAN_DEPLOYER_V3_ADDRESS` | Custodian deployer |
+| `NEXT_PUBLIC_GRADUATION_SETTLEMENT_EXECUTOR_V3_ADDRESS` | Settlement executor |
+| `NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_QUOTER_V2` | Graduated-token quoting |
+| `NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_SWAP_ROUTER_02` | Graduated-token swaps |
+| `NEXT_PUBLIC_BASE_MAINNET_UNISWAP_V3_FACTORY` | Canonical pool validation |
+
+## Data and services
+
+| Variable | Purpose |
+| --- | --- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Local PostgreSQL container |
+| `DATABASE_URL` | API/indexer PostgreSQL connection |
+| `REDIS_URL` | Redis connection |
+| `BASE_MAINNET_RPC_URL` | Server-side Mainnet RPC; may contain credentials |
+| `BASE_MAINNET_CHAINLINK_ETH_USD_FEED` | Mainnet Chainlink feed address |
+| `CHAINLINK_ETH_USD_MAX_AGE` | Maximum accepted oracle age |
+
+## Indexer
+
+`INDEXER_MODE`, `INDEXER_START_BLOCK`, `INDEXER_STOP_BLOCK`, `INDEXER_CONFIRMATIONS`, `INDEXER_BATCH_SIZE`, `INDEXER_RPC_MAX_ATTEMPTS`, `INDEXER_RPC_INITIAL_DELAY_MS`, `INDEXER_RPC_MAX_DELAY_MS`, `ZONK_INDEXER_CONTRACTS`, and `ZONK_FACTORY_V3_ADDRESS` configure ingestion and replay.
+
+## Deployment-only
+
+The template also contains canonical Uniswap deployment inputs and governance/Safe variables. Those are operator inputs, not normal application runtime configuration. Mainnet deployment does not read `DEPLOYER_PRIVATE_KEY`; never introduce a raw Mainnet key into environment files.

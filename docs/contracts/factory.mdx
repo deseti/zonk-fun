@@ -1,0 +1,19 @@
+---
+title: "ZonkFactoryV3"
+description: "Atomic token launch and canonical registry."
+---
+
+**Address:** [`0x90B371F571975a0b0693Dc3C46Eea19733c72ddD`](https://basescan.org/address/0x90B371F571975a0b0693Dc3C46Eea19733c72ddD)
+
+The public launch entry point is:
+
+```solidity
+createToken(string name, string symbol, bytes32 userSalt)
+  returns (address token, address curve)
+```
+
+The function validates name and symbol byte lengths, rejects a zero salt and duplicate creator/name/symbol definitions, deploys a token and curve, mints the full supply to the curve, registers fee relationships, reserves a canonical Uniswap V3 pool, and emits `TokenLaunchedV3`.
+
+Useful reads include `isToken(token)`, `curveOf(token)`, `tokenInfo(token)`, and `tokensByCreator(creator)`.
+
+The factory constructor also creates immutable `TokenDeployerV3` and `CurveDeployerV3` helpers. The token deployer searches bounded CREATE2 candidates so the token address is compatible with the reserved pool constraints.

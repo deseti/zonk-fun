@@ -1,0 +1,39 @@
+---
+title: "Fees"
+description: "Curve trading fees and post-graduation LP fee allocation."
+---
+
+## Bonding-curve trades
+
+Both buys and sells charge 1% (`100` basis points) using integer floor division.
+
+- On buys, the fee is taken from accepted gross ETH; the remainder becomes curve principal.
+- On sells, the fee is taken from gross ETH released by the curve; the remainder is sent to the seller.
+
+The 1% fee amount is divided as follows:
+
+| Recipient/account | Share of the fee | Effective share of gross before integer rounding |
+| --- | ---: | ---: |
+| Creator | 35% | 0.35% |
+| Community | 20% | 0.20% |
+| Trader rewards | 15% | 0.15% |
+| Protocol | Remainder (normally 30%) | Approximately 0.30% |
+
+The protocol remainder absorbs integer-rounding dust. `FeeManagerV3` tracks pull-based liabilities. Anyone may trigger a claim or vault-funding function, but assets go only to the registered treasury, creator payout, community vault, or trader rewards vault.
+
+## Permanent Uniswap V3 LP fees
+
+Uniswap pool fees are created by external swaps after graduation. The canonical position uses the 1% Uniswap V3 fee tier. Permissionless `collectFees()` sends only accrued position fees—not LP principal—to `PermanentLPFeeVaultV3`.
+
+| Recipient/account | Share of collected LP fees |
+| --- | ---: |
+| Creator | 25% |
+| Community | 30% |
+| Trader rewards | 15% |
+| Protocol | Remainder (normally 30%) |
+
+LP fees can consist of either launch tokens or WETH. The vault tracks liabilities by recipient/launch token and asset and verifies asset backing before accrual or transfer.
+
+<Note>
+  The community and trader-reward vaults are accounting and custody components. These docs do not promise a particular distribution schedule or reward amount.
+</Note>

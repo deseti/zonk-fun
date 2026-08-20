@@ -1,0 +1,15 @@
+---
+title: "GraduationManagerV3"
+description: "Canonical pool reservation and exact terminal settlement."
+---
+
+**Address:** [`0x5917ce7AFF3a5F276334464E3dEa2a96e94c81D8`](https://basescan.org/address/0x5917ce7AFF3a5F276334464E3dEa2a96e94c81D8)
+
+At launch registration, the manager authenticates the factory/token/curve relationships and reserves the canonical token/WETH 1% pool. It accepts only a missing pool or a canonical uninitialized pool, initializes it at the expected terminal price, and records the selection.
+
+Only the registered curve can call `graduate`. The manager requires exactly 200M tokens and 3 ETH, verifies the pool is still at its exact expected initialization price, deploys the per-token custodian and residual escrow, invokes the immutable settlement executor, binds the returned LP NFT, and emits `GraduatedV3`.
+
+The manager is paired with:
+
+- `PermanentLPCustodianDeployerV3`: [`0xcB57927175f9a50e5bE5D998959b4410DE5a31f8`](https://basescan.org/address/0xcB57927175f9a50e5bE5D998959b4410DE5a31f8)
+- `GraduationSettlementExecutorV3`: [`0xDF28CB84aD854fBFfA7155d0945974c113D4154e`](https://basescan.org/address/0xDF28CB84aD854fBFfA7155d0945974c113D4154e)

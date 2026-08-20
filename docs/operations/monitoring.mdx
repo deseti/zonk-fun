@@ -1,0 +1,31 @@
+---
+title: "Monitoring"
+description: "Operational signals for the web, API, indexer, and data plane."
+---
+
+## Service health
+
+- Web process availability and page render success.
+- API `/health` for process liveness and `/readyz` for database readiness.
+- PostgreSQL and Redis container health checks.
+- Migration job completion before API/indexer startup.
+
+## Chain and indexer health
+
+- Current Base Mainnet head versus finalized indexer checkpoint.
+- Checkpoint age and hash continuity.
+- RPC latency, retry exhaustion, rate limiting, and chain-ID mismatch.
+- Reorg recovery activity and noncanonical row counts.
+- Launch discovery, trade projection, and matched graduation-settlement errors.
+
+## Data integrity
+
+- Fee/vault liabilities versus contract or database backing, depending on the layer being checked.
+- Canonical projection counts and exclusion behavior.
+- Metadata drafts that remain unfinalized after a confirmed launch.
+- Null OHLC fields treated as unavailable rather than zero.
+- Oracle freshness and `oracle_unavailable` rate.
+
+<Note>
+  An API or indexer alarm does not imply onchain financial state changed. Start incident tracing from receipt and block provenance, then checkpoint, canonical raw events, projections, API, and frontend.
+</Note>

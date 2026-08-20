@@ -1,0 +1,24 @@
+---
+title: "Vaults and distribution"
+description: "Community, reward, and permanent LP fee accounting contracts."
+---
+
+## TokenCommunityVaultV3
+
+[`0x4cF8DdF9870De92299d71550D0401D4d3DecDc46`](https://basescan.org/address/0x4cF8DdF9870De92299d71550D0401D4d3DecDc46) tracks ETH and ERC-20 community allocations by launch token and asset. Permissionless forwarding always sends the complete attributed balance to the configured community treasury.
+
+## TraderRewardsVaultV3
+
+[`0xc3ED81C44829dB61D4ff7a9d85280865421BAD49`](https://basescan.org/address/0xc3ED81C44829dB61D4ff7a9d85280865421BAD49) holds ETH and ERC-20 reward funding by launch token and asset. Only the bound distributor may pay a claimant.
+
+## TraderRewardsDistributorV3
+
+[`0x8a8d9bc76EE0A7BdD931112BAFb11AD2C9ed0e0b`](https://basescan.org/address/0x8a8d9bc76EE0A7BdD931112BAFb11AD2C9ed0e0b) publishes immutable Merkle roots for an epoch, launch token, and asset. A valid proof authorizes one claim per address. Roots do not reserve funds onchain, so operators must not authorize more unpaid claims than available or committed funding.
+
+## PermanentLPFeeVaultV3
+
+[`0x7D332230E071a8FFb4516f45D619C96CBedeE9a3`](https://basescan.org/address/0x7D332230E071a8FFb4516f45D619C96CBedeE9a3) accepts fees only from authenticated per-token permanent custodians, checks the canonical NFT, verifies asset backing, and records protocol, creator, community, and reward liabilities by asset.
+
+<Note>
+  These contracts custody protocol-designated fees and allocations. They do not take control of a user's browser wallet or authorize user trades.
+</Note>

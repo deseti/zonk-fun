@@ -1,0 +1,62 @@
+---
+title: "Bonding curve"
+description: "The verified endpoint-cp-v3 shifted constant-product model."
+---
+
+Each token uses a shifted constant-product curve with 18-decimal integer arithmetic.
+
+## Constants
+
+| Parameter | Value |
+| --- | ---: |
+| Total supply | 1,000,000,000 tokens |
+| Curve allocation | 800,000,000 tokens |
+| Graduation LP allocation | 200,000,000 tokens |
+| Virtual token reserve | `1,066,666,666.666666666666666667` tokens |
+| Virtual ETH reserve | 1 ETH |
+| Net graduation reserve | 3 ETH |
+| Trading fee | 1% of accepted buy gross or gross sell output |
+| Initial reported price | `937,500,000` wei per whole token |
+| Terminal reported price | `15,000,000,000` wei per whole token |
+
+## Invariant
+
+Let:
+
+- `s` be sold curve tokens in base units;
+- `r` be active ETH principal in wei;
+- `Vt` be the virtual token reserve;
+- `Ve` be the virtual ETH reserve;
+- `K = Vt × Ve`.
+
+The virtual coordinates are:
+
+```text
+x = Vt - s
+y = Ve + r
+x × y ≈ K
+```
+
+The contract uses Solidity integer arithmetic. Outputs round down, while the post-trade virtual ETH coordinate uses ceiling division. Those rounding rules are part of the implementation.
+
+For a nonterminal buy with net curve input `Δr`, the contract computes:
+
+```text
+postVirtualTokens = ceil(K / (Ve + r + Δr))
+tokensOut = (Vt - s) - postVirtualTokens
+```
+
+For a sell of `Δs` tokens:
+
+```text
+postSold = s - Δs
+postVirtualETH = ceil(K / (Vt - postSold))
+grossETHOut = (Ve + r) - postVirtualETH
+netSellerOutput = grossETHOut - fee
+```
+
+The reported spot price is `ceil((Ve + reserveCoordinate) × 1e18 / (Vt - s))` wei per whole token. Price rises as buys reduce virtual token inventory and add net reserve; sells reverse that movement before graduation.
+
+<Warning>
+  The curve formula does not guarantee value, liquidity at a desired price, or graduation. Transaction ordering and slippage can materially change execution.
+</Warning>

@@ -1,0 +1,24 @@
+---
+title: "Contract overview"
+description: "The deployed endpoint-cp-v3 contract family."
+---
+
+All addresses on these pages are for **Base Mainnet (chain ID 8453)** and were checked against the verified production deployment record and current Base Mainnet deployment evidence reviewed for this documentation. The tracked example deployment file contains placeholders and is not the source of the published addresses.
+
+| Contract | Responsibility |
+| --- | --- |
+| `ZonkFactoryV3` | Atomic token/curve launch and registry |
+| `FeeManagerV3` | Curve-fee liabilities and recipient lifecycle |
+| `GraduationManagerV3` | Pool reservation, graduation authentication, and settlement coordination |
+| `TokenCommunityVaultV3` | Community allocation custody by launch token and asset |
+| `TraderRewardsVaultV3` | Trader-reward custody by launch token and asset |
+| `TraderRewardsDistributorV3` | Immutable-root Merkle claim authorization |
+| `PermanentLPFeeVaultV3` | Backed accounting for collected LP fees |
+| `PermanentLPCustodianDeployerV3` | Deterministic per-token custodian and settlement-executor deployment |
+| `GraduationSettlementExecutorV3` | Exact one-time LP mint execution |
+
+Per launch, the factory creates `ZonkTokenV3` and `ZonkCurveV3`; the graduation path creates a `PermanentLPCustodianV3` and `PermanentResidualEscrowV3`. `TokenDeployerV3` and `CurveDeployerV3` are factory-owned internal deployment components, not primary user entry points.
+
+<Card title="Address reference" icon="map-pin" href="/docs/reference/contract-addresses">
+  Copy verified Mainnet addresses and open them on BaseScan.
+</Card>

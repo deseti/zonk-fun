@@ -1,0 +1,19 @@
+---
+title: "Protocol overview"
+description: "The endpoint-cp-v3 launch, curve, fee, and graduation system."
+---
+
+The production protocol is `endpoint-cp-v3`. A factory creates one fixed-supply ERC-20 and one shifted constant-product curve per launch. The curve provides buy and sell liquidity until its exact terminal state is reached. At that point it atomically settles the reserved assets into a canonical full-range Uniswap V3 position owned by an ownerless per-token custodian.
+
+| Phase | Venue | Reserve assets | Trading state |
+| --- | --- | --- | --- |
+| Launch | Factory registration | 1B launch tokens in curve | Curve active |
+| Curve | `ZonkCurveV3` | Up to 3 ETH active principal; diminishing curve inventory | Buy and sell |
+| Graduation transaction | Manager and settlement executor | 200M tokens + 3 ETH | Curve closes atomically |
+| Graduated | Canonical Uniswap V3 token/WETH pool | Full-range external liquidity position | Uniswap V3 swaps |
+
+The contracts do not promise that a token will reach graduation. Market participation determines whether the terminal condition is ever reached.
+
+<Info>
+  Curve fees and post-graduation LP fees use different accounting paths. See [Fees](/docs/protocol/fees).
+</Info>

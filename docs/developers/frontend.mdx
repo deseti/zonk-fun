@@ -1,0 +1,27 @@
+---
+title: "Frontend"
+description: "Next.js, RainbowKit, wagmi, viem, quotes, and transaction state."
+---
+
+The production web application uses Next.js 16, React 19, RainbowKit, wagmi, viem, TanStack Query, Zod, and Lightweight Charts.
+
+## Wallet architecture
+
+`wagmiConfig` exposes only Base Mainnet and the injected connector. RainbowKit renders the connection UI. The active address, chain, and wallet client flow through a browser-wallet provider; there is no active Privy wallet runtime.
+
+## Writes
+
+1. Read an onchain quote and balances.
+2. Derive a minimum output from configured slippage.
+3. Bind the quote to wallet, token, side, network, state, and deadline.
+4. Simulate the exact request.
+5. Append the ERC-8021 Builder Code suffix.
+6. Ask the connected wallet to send.
+7. Wait for and validate the receipt.
+8. Refresh onchain and indexed queries.
+
+The transaction modal identifies Base (`8453`), active wallet, reviewed amounts, hash, and current phase. BaseScan links use the confirmed or submitted transaction hash.
+
+## Indexed reads
+
+Zod schemas fail closed on malformed API responses. ETH remains the authoritative displayed denomination; optional USD reference values depend on a validated API oracle response and render unavailable when missing or stale.

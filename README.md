@@ -2,6 +2,10 @@
 
 Base-native permissionless token launch infrastructure.
 
+- Production: [zonk.fun](https://zonk.fun)
+- Official documentation source: [docs/index.mdx](docs/index.mdx)
+- Base Mainnet contracts: [docs/reference/contract-addresses.mdx](docs/reference/contract-addresses.mdx)
+
 ## Status
 
 Project foundation is under active development.

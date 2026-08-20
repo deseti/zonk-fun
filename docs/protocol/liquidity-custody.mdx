@@ -1,0 +1,22 @@
+---
+title: "Liquidity custody"
+description: "Why graduated LP principal is permanently bound."
+---
+
+Each graduated token receives a dedicated `PermanentLPCustodianV3`. The Uniswap V3 position NFT is minted directly to this ownerless, non-upgradeable contract.
+
+The custodian deliberately has no method to:
+
+- decrease liquidity;
+- transfer or approve the LP NFT;
+- rescue principal;
+- delegate calls;
+- receive arbitrary NFTs.
+
+It exposes only irreversible position binding and permissionless fee collection. Binding validates the token/WETH pair, canonical factory, 1% fee tier, full-range ticks, and NFT ownership.
+
+`collectFees()` calls the NonfungiblePositionManager's fee collection function and sends proceeds to `PermanentLPFeeVaultV3`. Collecting fees does not decrease liquidity. The vault then accounts separately for protocol, creator, community, and trader-reward shares.
+
+<Warning>
+  “Permanent” is a contract architecture property, not a claim that the pool will always have useful market depth or that either asset will retain value.
+</Warning>

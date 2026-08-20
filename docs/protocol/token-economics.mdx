@@ -1,0 +1,33 @@
+---
+title: "Token economics"
+description: "Fixed supply, allocations, reserves, and lifecycle state."
+---
+
+## Per-token immutable structure
+
+| Allocation | Tokens | Share of supply | Initial holder |
+| --- | ---: | ---: | --- |
+| Bonding-curve distribution | 800,000,000 | 80% | Per-token curve |
+| Graduation liquidity | 200,000,000 | 20% | Per-token curve until terminal settlement |
+| Total | 1,000,000,000 | 100% | Minted once during initialization |
+
+The token has 18 decimals. `ZonkTokenV3.initialize` mints the entire fixed supply to the curve. The creator receives no direct token allocation from factory creation. An optional dev buy is a separate market buy from the curve.
+
+## Before graduation
+
+- Buyers receive tokens from the 800M curve allocation.
+- Net buy principal increases the active ETH reserve.
+- Sellers return tokens to the curve and receive ETH from active reserve, minus the trading fee.
+- Forced or accidental ETH is excluded from quote and spot-price accounting as unaccounted ETH.
+
+## At graduation
+
+The curve must have sold exactly 800M tokens and accumulated exactly 3 ETH of net active reserve. The remaining 200M tokens and the 3 ETH are forwarded atomically for Uniswap V3 settlement. Active curve trading closes.
+
+## After graduation
+
+Market state belongs to the external token/WETH Uniswap V3 pool. The permanent custodian holds the full-range LP NFT; a separate residual escrow permanently accounts for the small token or WETH amount left by exact integer liquidity minting.
+
+<Note>
+  Supply and protocol constants are global parameters. Price, holders, traded volume, reserve progress, and graduation state are live per-token values.
+</Note>

@@ -1,0 +1,21 @@
+---
+title: "Wallet safety"
+description: "Checks to make before connecting, approving, or trading."
+---
+
+Before signing:
+
+1. Confirm the site is `https://zonk.fun`.
+2. Confirm the wallet shows Base Mainnet, chain ID `8453`.
+3. Confirm the active address is the one you intend to use.
+4. For creation, verify the factory address and `0 ETH` call value.
+5. For buys, verify ETH value and minimum token output.
+6. For approvals, verify the spender is the token's curve or configured Uniswap SwapRouter02 and the amount is expected.
+7. For sells, verify token input and minimum ETH output.
+8. Preserve the transaction hash and check it on BaseScan.
+
+Use separate wallets or conservative balances when interacting with unfamiliar tokens. Revoke unused allowances using a trusted Base-compatible allowance tool if that fits your risk policy.
+
+<Warning>
+  Support should never need your seed phrase, private key, or raw wallet export. Do not sign opaque messages or transactions you do not understand.
+</Warning>

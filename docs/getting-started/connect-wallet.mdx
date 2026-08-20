@@ -1,0 +1,20 @@
+---
+title: "Connect a wallet"
+description: "Use an injected browser wallet safely on Zonk.fun."
+---
+
+Zonk.fun uses RainbowKit with wagmi and viem. The current production connector is an injected browser wallet, including wallets such as Rabby and MetaMask.
+
+1. Install or open a compatible browser wallet.
+2. Select **Connect Wallet** on [zonk.fun](https://zonk.fun).
+3. Approve the site connection in the wallet.
+4. Switch the wallet to **Base** if prompted.
+5. Confirm that the interface shows the address you intend to use.
+
+The connected wallet is the signer. Zonk.fun does not ask for, store, or control a seed phrase or private key.
+
+<Warning>
+  Never enter a seed phrase or private key into Zonk.fun, its documentation, a support message, or a transaction form. A legitimate browser-wallet flow asks you to approve a connection or transaction inside the wallet extension.
+</Warning>
+
+See [Wallet safety](/docs/security/wallet-safety) for transaction-checking guidance.

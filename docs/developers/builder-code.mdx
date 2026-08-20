@@ -1,0 +1,27 @@
+---
+title: "Base Builder Code"
+description: "ERC-8021 attribution on Zonk.fun frontend transactions."
+---
+
+| Setting | Value |
+| --- | --- |
+| Builder Code | `bc_tea0a669` |
+| Base App ID | `6a86d307abf0a9eb2b3c7565` |
+| Encoding library | `ox/erc8021` |
+| viem request field | `dataSuffix` |
+
+[ERC-8021](https://docs.base.org) provides transaction attribution through a data suffix. The frontend derives that suffix with `Attribution.toDataSuffix({ codes: [ZONK_BUILDER_CODE] })`.
+
+The frontend first simulates the original contract request without attribution metadata. After simulation succeeds, `withBuilderCode(request)` adds the ERC-8021 `dataSuffix` to a copy of that request immediately before wallet submission. The original calldata, ABI arguments, value, slippage parameters, and destination remain unchanged.
+
+Verified attributed write paths are:
+
+- factory token creation;
+- optional dev buy;
+- curve buy;
+- curve-token approval;
+- curve sell;
+- graduated-token approval;
+- graduated Uniswap V3 buy or sell swap.
+
+Builder Code is attribution metadata, not authentication or a security control.

@@ -1,0 +1,27 @@
+---
+title: "Protocol architecture"
+description: "Relationships among launch, trading, settlement, and custody contracts."
+---
+
+```mermaid
+flowchart TD
+  U[Browser wallet] --> F[ZonkFactoryV3]
+  F --> T[ZonkTokenV3]
+  F --> C[ZonkCurveV3]
+  C --> FM[FeeManagerV3]
+  FM --> CV[TokenCommunityVaultV3]
+  FM --> RV[TraderRewardsVaultV3]
+  C --> GM[GraduationManagerV3]
+  GM --> EX[GraduationSettlementExecutorV3]
+  EX --> NPM[Uniswap V3 NonfungiblePositionManager]
+  NPM --> PC[Per-token PermanentLPCustodianV3]
+  PC --> PF[PermanentLPFeeVaultV3]
+  PF --> CV
+  PF --> RV
+  PF --> FM
+  RV --> RD[TraderRewardsDistributorV3]
+```
+
+The factory owns the launch registry and creates internal `TokenDeployerV3` and `CurveDeployerV3` components in its constructor. The manager reserves the token/WETH pool during launch, before curve trading. The curve authenticates the graduation call. The settlement executor mints one full-range NFT directly to a newly deployed custodian.
+
+One-time bootstrap authorities bind the deployed graph and are consumed. Current Base Mainnet deployment evidence records completed Ownable2Step ownership handoff for the owner-controlled fee/community/reward administration contracts.

@@ -1,0 +1,10 @@
+---
+title: "ZonkTokenV3"
+description: "The fixed-supply ERC-20 created for each launch."
+---
+
+`ZonkTokenV3` is an 18-decimal ERC-20 with immutable `factory` and `creator` fields. Its constructor records name, symbol, factory, and creator. A one-time `initialize(inventoryOwner)` call can only be made by the factory and mints exactly 1 billion tokens to the curve.
+
+The current token contract does not expose protocol minting after initialization. Factory creation also verifies that the curve owns the complete supply and the creator directly owns zero tokens at launch.
+
+Standard ERC-20 allowance semantics apply. Selling before graduation approves the curve; selling after graduation approves the validated Uniswap SwapRouter02.

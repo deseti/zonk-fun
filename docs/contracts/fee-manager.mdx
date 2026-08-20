@@ -1,0 +1,16 @@
+---
+title: "FeeManagerV3"
+description: "Curve-fee custody, liabilities, and recipient changes."
+---
+
+**Address:** [`0x016b62B2597954a0C3c2a3a800A9ec29182A1915`](https://basescan.org/address/0x016b62B2597954a0C3c2a3a800A9ec29182A1915)
+
+Only a registered curve can deposit that token's trade fees. The manager verifies the deposited ETH exactly matches the declared split and maintains separate liabilities for protocol, creator, community, and trader rewards.
+
+Claims and funding are pull-based:
+
+- `claimProtocolFees()` sends accrued protocol ETH to the treasury.
+- `claimCreatorFees(token)` sends accrued creator ETH to the registered payout.
+- `fundCommunityVault(token)` and `fundTraderRewardsVault(token)` move token-attributed ETH into the bound vaults.
+
+Anyone may call these functions, but callers cannot choose the recipient. A creator payout change uses propose/accept semantics. Treasury rotation is owner-proposed, recipient-accepted, and delayed 48 hours.

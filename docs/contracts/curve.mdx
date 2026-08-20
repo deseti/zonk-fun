@@ -1,0 +1,19 @@
+---
+title: "ZonkCurveV3"
+description: "Per-token quoting, trading, reserve accounting, and terminal handoff."
+---
+
+Every launch has its own curve address, resolved from `ZonkFactoryV3.curveOf(token)` and indexed with the launch.
+
+## Public trading methods
+
+```solidity
+quoteBuy(uint256 grossInput) returns (BuyQuote)
+buy(uint256 minTokensOut, uint256 deadline) payable returns (BuyQuote)
+quoteSell(uint256 tokensIn) returns (SellQuote)
+sell(uint256 tokensIn, uint256 minEthOut, uint256 deadline) returns (SellQuote)
+```
+
+Quotes expose the full fee split and net principal/output. Buys can return `acceptedGross` below `submittedGross` and a `refund` when the input exceeds the terminal requirement. Sells use `transferFrom`, so the curve needs sufficient token allowance.
+
+The curve tracks `soldSupply`, `activeEthReserve`, `terminalGraduationReserve`, `graduationEthForwarded`, and `graduated`. Unaccounted forced ETH is excluded from curve math. Once graduated, both quote and trade entry points reject further curve trading.

@@ -1,0 +1,24 @@
+---
+title: "Deployment"
+description: "High-level application and contract release boundaries."
+---
+
+Zonk.fun has two distinct deployment domains:
+
+- **Protocol contracts:** Foundry scripts deploy and bind the V3 graph on Base Mainnet. The repository requires chain ID 8453 and validates canonical Uniswap Factory, WETH, NonfungiblePositionManager, pool fee, and tick spacing. Deployment broadcast and governance transactions are manual, separately authorized operations.
+- **Application services:** Docker Compose defines PostgreSQL, Redis, one-shot migrations, Go API, Go indexer, and Next.js web services with health/dependency ordering and persistent data/object volumes.
+
+## Safe release sequence
+
+1. Review source and the verified production deployment record.
+2. Validate build, unit, invariant, integration, and configuration checks.
+3. Apply database migrations before starting API/indexer code that requires the new schema.
+4. Configure Base Mainnet addresses, server RPC, database, cache, and browser-safe values through protected environment management.
+5. Start API only after PostgreSQL is healthy and migrations complete.
+6. Start the indexer from the exact deployment block for a fresh database; never overwrite a durable checkpoint accidentally.
+7. Build the frontend with the matching chain and contract addresses.
+8. Verify readiness, indexed catch-up, contract reads, and wallet simulations before directing users to the release.
+
+<Warning>
+  Never place a raw Mainnet private key in `.env`, a Compose file, documentation, logs, or a command line. The repository's Mainnet deployment process uses an encrypted Foundry keystore and explicit sender; live broadcast is not an application startup step.
+</Warning>

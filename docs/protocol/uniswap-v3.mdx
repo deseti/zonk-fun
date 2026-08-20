@@ -1,0 +1,20 @@
+---
+title: "Uniswap V3 integration"
+description: "Canonical Base Mainnet liquidity configuration after graduation."
+---
+
+| Dependency | Base Mainnet value |
+| --- | --- |
+| WETH | [`0x4200000000000000000000000000000000000006`](https://basescan.org/address/0x4200000000000000000000000000000000000006) |
+| Uniswap V3 Factory | [`0x33128a8fC17869897dcE68Ed026d694621f6FDfD`](https://basescan.org/address/0x33128a8fC17869897dcE68Ed026d694621f6FDfD) |
+| NonfungiblePositionManager | [`0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1`](https://basescan.org/address/0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1) |
+| QuoterV2 used by the web | [`0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a`](https://basescan.org/address/0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a) |
+| SwapRouter02 used by the web | [`0x2626664c2603336E57B271c5C0b26F421741e481`](https://basescan.org/address/0x2626664c2603336E57B271c5C0b26F421741e481) |
+| Pool fee | `10000` (1%) |
+| Tick spacing | `200` |
+
+At token creation, the manager creates or adopts only an uninitialized canonical token/WETH pool and initializes it at the curve's terminal price. An already initialized or unsafe candidate is rejected. At graduation, the manager verifies that exact price again before settlement.
+
+The production frontend validates pool and periphery bytecode and relationships before quoting or swapping. Buy swaps wrap ETH to router-held WETH in a multicall; sell swaps use an ERC-20 approval and unwrap WETH output to ETH.
+
+Zonk.fun is not affiliated with or endorsed by Uniswap. See [Uniswap documentation](https://docs.uniswap.org) for the external protocol.
